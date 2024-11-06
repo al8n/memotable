@@ -13,4 +13,4 @@ extern crate std;
 /// A memtable implementation based on unbounded `SkipList`.
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub mod linked;
+pub mod unbounded;

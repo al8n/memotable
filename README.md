@@ -19,15 +19,18 @@ English | [简体中文][zh-cn-url]
 
 </div>
 
+## Features
+
+- Support with or without multiple version
+- Unbounded memtable based on dynamic allocated skiplist and bounded memtable based on ARENA style skiplist.
+- Range deletions and range updates
+
 ## Installation
 
 ```toml
 [dependencies]
 memorable = "0.1"
 ```
-
-## Features
-- [x] Create a Rust open-source repo fast 
 
 #### License
 

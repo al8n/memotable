@@ -1,5 +1,6 @@
 use {
-  super::{KeyRange, KeySpan, Memtable, StartKey},
+  super::{KeySpan, Memtable},
+  crate::unbounded::StartKey,
   crossbeam_skiplist_mvcc::nested::Entry as MapEntry,
 };
 
