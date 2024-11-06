@@ -14,3 +14,6 @@ extern crate std;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod unbounded;
+
+/// A memtable implementation based on bounded ARENA-style `SkipList`.
+pub mod bounded;

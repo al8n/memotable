@@ -5,7 +5,7 @@ edition = "2021"
 repository = "https://github.com/al8n/memorable"
 homepage = "https://github.com/al8n/memorable"
 documentation = "https://docs.rs/memorable"
-description = "A template for creating Rust open-source repo on GitHub"
+description = "Lock-free, ordered and multiple version memory table for key-value databases."
 license = "MIT OR Apache-2.0"
 rust-version = "1.81"
 
@@ -16,13 +16,12 @@ harness = false
 
 [features]
 default = ["std"]
-alloc = []
-std = ["crossbeam-skiplist-mvcc", "crossbeam-skiplist", "smallvec-wrapper/std"]
+alloc = ["dbutils/alloc"]
+std = ["crossbeam-skiplist-mvcc", "smallvec-wrapper/std", "dbutils/std"]
 
 [dependencies]
-crossbeam-skiplist = { package = "crossbeam-skiplist-pr1132", version = "0.1", optional = true }
 crossbeam-skiplist-mvcc = { version = "0.2", optional = true }
-indexsort = "0.2"
+dbutils = { version = "0.10", default-features = false }
 ref-cast = "1"
 smallvec-wrapper = { version = "0.1", default-features = false }
 

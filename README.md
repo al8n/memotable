@@ -3,7 +3,7 @@
 </div>
 <div align="center">
 
-Generic purpose, lock-free, ordered, memory table.
+Lock-free, ordered and multiple version memory table for key-value databases.
 
 [<img alt="github" src="https://img.shields.io/badge/github-al8n/memorable-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
 <img alt="LoC" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fal8n%2F327b2a8aef9003246e45c6e47fe63937%2Fraw%2Fmemorable" height="22">
@@ -21,9 +21,10 @@ English | [简体中文][zh-cn-url]
 
 ## Features
 
-- Support with or without multiple version
-- Unbounded memtable based on dynamic allocated skiplist and bounded memtable based on ARENA style skiplist.
+- Lock-free, multiple version
 - Range deletions and range updates
+- Flexiable iterators and APIs for users to implement flush logic
+- Unbounded memtable based on dynamic allocated unbounded skiplist and fixed-size bounded memtable based on ARENA style skiplist.
 
 ## Installation
 
@@ -39,7 +40,7 @@ Apache License (Version 2.0).
 
 See [LICENSE-APACHE](LICENSE-APACHE), [LICENSE-MIT](LICENSE-MIT) for details.
 
-Copyright (c) 2021 Al Liu.
+Copyright (c) 2024 Al Liu.
 
 [Github-url]: https://github.com/al8n/memorable/
 [CI-url]: https://github.com/al8n/memorable/actions/workflows/ci.yml
