@@ -152,6 +152,46 @@ where
     }
   }
 
+  /// Returns the first entry in the memtable.
+  ///
+  /// ## Example
+  /// 
+  /// ```rust
+  /// use memorable::unbounded::multiple_version::Memtable;
+  /// 
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// 
+  /// memtable.insert(0, 1, "one");
+  /// memtable.insert(0, 2, "two");
+  /// 
+  /// let first = memtable.first(0).unwrap();
+  /// assert_eq!(*first.value(), "one");
+  /// ```
+  #[inline]
+  pub fn first(&self, version: u64) -> Option<Entry<'_, K, V>> {
+    self.iter(version).next()
+  }
+
+  /// Returns the last entry in the memtable.
+  /// 
+  /// ## Example
+  /// 
+  /// ```rust
+  /// use memorable::unbounded::multiple_version::Memtable;
+  /// 
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// 
+  /// memtable.insert(0, 1, "one");
+  /// memtable.insert(0, 2, "two");
+  /// 
+  /// let last = memtable.last(0).unwrap();
+  /// assert_eq!(*last.value(), "two");
+  /// ```
+  #[inline]
+  pub fn last(&self, version: u64) -> Option<Entry<'_, K, V>> {
+    self.iter(version).next_back()
+  }
+
   /// Returns an [`Entry`] pointing to the highest element whose key is below
   /// the given bound. If no such element is found then `None` is
   /// returned.
