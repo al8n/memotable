@@ -1,13 +1,13 @@
 [package]
-name = "template-rs"
+name = "memorable"
 version = "0.0.0"
 edition = "2021"
-repository = "https://github.com/al8n/template-rs"
-homepage = "https://github.com/al8n/template-rs"
-documentation = "https://docs.rs/template-rs"
+repository = "https://github.com/al8n/memorable"
+homepage = "https://github.com/al8n/memorable"
+documentation = "https://docs.rs/memorable"
 description = "A template for creating Rust open-source repo on GitHub"
 license = "MIT OR Apache-2.0"
-rust-version = "1.73"
+rust-version = "1.81"
 
 [[bench]]
 path = "benches/foo.rs"
@@ -17,9 +17,14 @@ harness = false
 [features]
 default = ["std"]
 alloc = []
-std = []
+std = ["crossbeam-skiplist-mvcc", "crossbeam-skiplist", "smallvec-wrapper/std"]
 
 [dependencies]
+crossbeam-skiplist = { package = "crossbeam-skiplist-pr1132", version = "0.1", optional = true }
+crossbeam-skiplist-mvcc = { version = "0.2", optional = true }
+indexsort = "0.2"
+ref-cast = "1"
+smallvec-wrapper = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 criterion = "0.5"

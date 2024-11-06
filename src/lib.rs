@@ -1,4 +1,4 @@
-//! A template for creating Rust open-source repo on GitHub
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
@@ -7,20 +7,10 @@
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
 extern crate alloc as std;
 
-#[cfg(all(feature = "std", not(feature = "alloc")))]
+#[cfg(feature = "std")]
 extern crate std;
 
-/// template
-pub fn it_works() -> usize {
-  4
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn test_works() {
-    assert_eq!(it_works(), 4);
-  }
-}
+/// A memtable implementation based on unbounded `SkipList`.
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub mod linked;
