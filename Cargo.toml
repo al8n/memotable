@@ -1,13 +1,13 @@
 [package]
-name = "template-rs"
+name = "memorable"
 version = "0.0.0"
 edition = "2021"
-repository = "https://github.com/al8n/template-rs"
-homepage = "https://github.com/al8n/template-rs"
-documentation = "https://docs.rs/template-rs"
-description = "A template for creating Rust open-source repo on GitHub"
+repository = "https://github.com/al8n/memorable"
+homepage = "https://github.com/al8n/memorable"
+documentation = "https://docs.rs/memorable"
+description = "Lock-free, ordered and multiple version memory table for key-value databases."
 license = "MIT OR Apache-2.0"
-rust-version = "1.73"
+rust-version = "1.81"
 
 [[bench]]
 path = "benches/foo.rs"
@@ -15,11 +15,17 @@ name = "foo"
 harness = false
 
 [features]
-default = ["std"]
-alloc = []
-std = []
+default = ["unbounded", "bounded"]
+alloc = ["dbutils?/alloc"]
+std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std", "either/default"]
+unbounded = ["std", "crossbeam-skiplist-mvcc"]
+bounded = ["dbutils"]
 
 [dependencies]
+crossbeam-skiplist-mvcc = { version = "0.2", optional = true, default-features = false }
+dbutils = { version = "0.10", default-features = false, optional = true }
+either = { version = "1", default-features = false }
+ref-cast = "1"
 
 [dev-dependencies]
 criterion = "0.5"
