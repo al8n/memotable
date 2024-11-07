@@ -20,6 +20,36 @@ mod entry;
 /// Iterators for the memtable.
 pub mod iter;
 
+/// Operation to be performed on the batch
+#[derive(Debug, Clone)]
+pub enum Operation<K, V> {
+  /// Insert
+  Insert {
+    /// The key
+    key: K,
+    /// The value
+    value: V,
+  },
+  /// Remove
+  Remove(K),
+  /// Remove deletions
+  RemoveRange {
+    /// The start bound
+    start_bound: Bound<K>,
+    /// The end bound
+    end_bound: Bound<K>,
+  },
+  /// Range update
+  UpdateRange {
+    /// The start bound
+    start_bound: Bound<K>,
+    /// The end bound
+    end_bound: Bound<K>,
+    /// The new value
+    value: V,
+  },
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, ref_cast::RefCast)]
 #[repr(transparent)]
 struct Query<K: ?Sized, Q: ?Sized> {
@@ -529,7 +559,7 @@ where
   /// memtable.insert(1, 2, "two-v1");
   /// memtable.insert(2, 3, "three-v2");
   ///
-  /// let mut iter = memtable.iter_all_points(0);
+  /// let mut iter = memtable.iter_points_all_versions(0);
   ///
   /// let first = iter.next().unwrap();
   /// assert_eq!(first.key(), &1);
@@ -537,7 +567,7 @@ where
   /// assert_eq!(first.version(), 0);
   /// assert!(iter.next().is_none());
   ///
-  /// let mut iter = memtable.iter_all_points(1);
+  /// let mut iter = memtable.iter_points_all_versions(1);
   ///
   /// let first = iter.next().unwrap();
   /// assert_eq!(first.key(), &1);
@@ -556,7 +586,7 @@ where
   /// assert!(iter.next().is_none());
   /// ```
   #[inline]
-  pub fn iter_all_points(&self, version: u64) -> IterAllPoints<'_, K, V> {
+  pub fn iter_points_all_versions(&self, version: u64) -> IterAllPoints<'_, K, V> {
     self.inner.skl.iter_all_versions(version)
   }
 
@@ -1078,6 +1108,47 @@ where
   K: Ord + Send + 'static,
   V: Send + 'static,
 {
+  /// Applies a batch of operations to the memtable.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::{Memtable, Operation};
+  /// use core::ops::Bound;
+  /// 
+  /// let memtable = Memtable::new();
+  /// 
+  /// let batch = vec![
+  ///   Operation::Insert { key: "key1", value: "value1" },
+  ///   Operation::Insert { key: "key2", value: "value2" },
+  ///   Operation::Remove("key3"),
+  ///   Operation::RemoveRange { start_bound: Bound::Included("key15"), end_bound: Bound::Unbounded },
+  ///   Operation::UpdateRange { start_bound: Bound::Included("key6"), end_bound: Bound::Included("key10"), value: "updated" },
+  /// ];
+  /// 
+  /// memtable.apply(0, batch.into_iter());
+  /// ```
+  pub fn apply<B>(&self, version: u64, batch: B)
+  where
+    B: Iterator<Item = Operation<K, V>>,
+  {
+    for op in batch {
+      match op {
+        Operation::Insert { key, value } => self.insert(version, key, value),
+        Operation::Remove(key) => self.remove(version, key),
+        Operation::RemoveRange {
+          start_bound,
+          end_bound,
+        } => self.remove_range(version, start_bound, end_bound),
+        Operation::UpdateRange {
+          start_bound,
+          end_bound,
+          value,
+        } => self.update_range(version, start_bound, end_bound, value),
+      }
+    }
+  }
+
   /// Inserts a `key`-`value` pair into the memtable and returns the new entry.
   ///
   /// If there is an existing entry with this key, it will be removed before inserting the new
