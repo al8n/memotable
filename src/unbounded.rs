@@ -8,14 +8,17 @@ use {
     nested::{Entry as MapEntry, SkipMap},
     Comparable, Equivalent,
   },
+  iter::*,
   ref_cast::RefCast,
   std::sync::Arc,
 };
 
-pub use {entry::*, iter::*};
+pub use entry::*;
 
 mod entry;
-mod iter;
+
+/// Iterators for the memtable.
+pub mod iter;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, ref_cast::RefCast)]
 #[repr(transparent)]
@@ -458,6 +461,105 @@ where
     Iter::new(version, self)
   }
 
+  /// Returns an iterator over the point entries of the memtable.
+  /// Bulk-deletion and bulk-update operations will be ignored.
+  ///
+  /// This method is useful when you implementing flush and compaction logic to build LSM tree.
+  ///
+  /// ## Example
+  ///
+  /// In this example, you can see that the value yield by point iter is not shadowed by the range entries.
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.insert(0, 1, "one");
+  /// memtable.insert(0, 2, "two");
+  /// memtable.insert(1, 3, "three");
+  /// memtable.insert(2, 4, "four");
+  ///
+  /// memtable.remove_range(1, Bound::Excluded(1), Bound::Unbounded);
+  ///
+  /// memtable.update_range(2, Bound::Unbounded, Bound::Included(2), "updated");
+  ///
+  /// let mut num = 0;
+  /// for (idx, entry) in memtable.iter_points(0).enumerate() {
+  ///   assert_eq!(entry.key(), &(idx + 1));
+  ///   assert_eq!(entry.version(), 0);
+  ///   num += 1;
+  /// }
+  /// assert_eq!(num, 2);
+  ///
+  /// let mut num = 0;
+  /// for (idx, entry) in memtable.iter_points(1).enumerate() {
+  ///   assert_eq!(entry.key(), &(idx + 1));
+  ///   num += 1;
+  /// }
+  /// assert_eq!(num, 3);
+  ///
+  /// let mut num = 0;
+  /// for (idx, entry) in memtable.iter_points(2).enumerate() {
+  ///   assert_eq!(entry.key(), &(idx + 1));
+  ///   num += 1;
+  /// }
+  /// assert_eq!(num, 4);
+  /// ```
+  #[inline]
+  pub fn iter_points(&self, version: u64) -> PointIter<'_, K, V> {
+    PointIter::new(version, self)
+  }
+
+  /// Returns an iterator over all point entries (with all versions) of the memtable.
+  /// Bulk-deletion and bulk-update operations will be ignored.
+  ///
+  /// This method is useful when you implementing flush and compaction logic to build LSM tree.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.insert(0, 1, "one-v0");
+  /// memtable.insert(1, 1, "one-v1");
+  /// memtable.insert(1, 2, "two-v1");
+  /// memtable.insert(2, 3, "three-v2");
+  ///
+  /// let mut iter = memtable.iter_all_points(0);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.key(), &1);
+  /// assert_eq!(*first.value().unwrap(), "one-v0");
+  /// assert_eq!(first.version(), 0);
+  /// assert!(iter.next().is_none());
+  ///
+  /// let mut iter = memtable.iter_all_points(1);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.key(), &1);
+  /// assert_eq!(*first.value().unwrap(), "one-v1");
+  /// assert_eq!(first.version(), 1);
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.key(), &1);
+  /// assert_eq!(*second.value().unwrap(), "one-v0");
+  /// assert_eq!(second.version(), 0);
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.key(), &2);
+  /// assert_eq!(*third.value().unwrap(), "two-v1");
+  /// assert_eq!(third.version(), 1);
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn iter_all_points(&self, version: u64) -> IterAllPoints<'_, K, V> {
+    self.inner.skl.iter_all_versions(version)
+  }
+
   /// Returns an iterator over the bulk deletion entries of the memtable.
   ///
   /// ## Example
@@ -491,20 +593,73 @@ where
     BulkDeletionIter::new(version, self)
   }
 
+  /// Returns an iterator over the bulk deletion entries (all versions) of the memtable.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
+  /// memtable.remove_range(1, Bound::Included(1), Bound::Included(7));
+  /// memtable.remove_range(0, Bound::Included(4), Bound::Included(7));
+  /// memtable.remove_range(0, Bound::Excluded(6), Bound::Unbounded);
+  ///
+  /// let mut iter = memtable.iter_bulk_deletions_all_versions(0);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Excluded(&3));
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&4));
+  /// assert_eq!(second.end_bound(), Bound::Included(&7));
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.start_bound(), Bound::Excluded(&6));
+  /// assert_eq!(third.end_bound(), Bound::Unbounded);
+  ///
+  /// let mut iter = memtable.iter_bulk_deletions_all_versions(1);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Included(&7));
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&1));
+  /// assert_eq!(second.end_bound(), Bound::Excluded(&3));
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.start_bound(), Bound::Included(&4));
+  /// assert_eq!(third.end_bound(), Bound::Included(&7));
+  ///
+  /// let fourth = iter.next().unwrap();
+  /// assert_eq!(fourth.start_bound(), Bound::Excluded(&6));
+  /// assert_eq!(fourth.end_bound(), Bound::Unbounded);
+  /// ```
+  #[inline]
+  pub fn iter_bulk_deletions_all_versions(&self, version: u64) -> BulkDeletionIterAll<'_, K, V> {
+    BulkDeletionIterAll::new(version, self)
+  }
+
   /// Returns an iterator over the bulk update entries of the memtable.
   ///
   /// ## Example
   ///
   /// ```rust
   /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
   ///
-  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3));
-  /// memtable.update_range(0, Bound::Included(4), Bound::Included(7));
-  /// memtable.update_range(0, Bound::Excluded(6), Bound::Unbounded);
+  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "[1, 3)");
+  /// memtable.update_range(1, Bound::Included(4), Bound::Included(7), "[4, 7]");
+  /// memtable.update_range(2, Bound::Excluded(6), Bound::Unbounded, "(6, +∞)");
   ///
-  /// let mut iter = memtable.iter_bulk_updates(0);
+  /// let mut iter = memtable.iter_bulk_updates(2);
   ///
   /// let first = iter.next().unwrap();
   /// assert_eq!(first.start_bound(), Bound::Included(&1));
@@ -523,6 +678,54 @@ where
   #[inline]
   pub fn iter_bulk_updates(&self, version: u64) -> BulkUpdateIter<'_, K, V> {
     BulkUpdateIter::new(version, self)
+  }
+
+  /// Returns an iterator over the bulk update entries (all versions) of the memtable.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "[1, 3)");
+  /// memtable.update_range(1, Bound::Included(1), Bound::Included(7), "[1, 7]");
+  /// memtable.update_range(1, Bound::Included(4), Bound::Included(7), "[4, 7]");
+  /// memtable.update_range(2, Bound::Excluded(6), Bound::Unbounded, "(6, +∞)");
+  ///
+  /// let mut iter = memtable.iter_bulk_updates_all_versions(2);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Included(&7));
+  /// assert_eq!(first.version(), 1);
+  /// assert_eq!(*first.value(), "[1, 7]");
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&1));
+  /// assert_eq!(second.end_bound(), Bound::Excluded(&3));
+  /// assert_eq!(second.version(), 0);
+  /// assert_eq!(*second.value(), "[1, 3)");
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.start_bound(), Bound::Included(&4));
+  /// assert_eq!(third.end_bound(), Bound::Included(&7));
+  /// assert_eq!(third.version(), 1);
+  /// assert_eq!(*third.value(), "[4, 7]");
+  ///
+  /// let fourth = iter.next().unwrap();
+  /// assert_eq!(fourth.start_bound(), Bound::Excluded(&6));
+  /// assert_eq!(fourth.end_bound(), Bound::Unbounded);
+  /// assert_eq!(fourth.version(), 2);
+  /// assert_eq!(*fourth.value(), "(6, +∞)");
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn iter_bulk_updates_all_versions(&self, version: u64) -> BulkUpdateIterAll<'_, K, V> {
+    BulkUpdateIterAll::new(version, self)
   }
 
   /// Returns an iterator over a subset of the memtable within the specified range.
@@ -554,6 +757,104 @@ where
     Range::new(version, self, r)
   }
 
+  /// Returns an iterator over a subset of point entries in the memtable within the specified range.
+  /// The yield value will not be shadowed by the range operation entries.
+  ///
+  /// ## Example
+  ///
+  /// In this example, you can see that the value yield by point range is not shadowed by the range operation entries.
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.insert(0, 1, "one");
+  /// memtable.insert(0, 2, "two");
+  /// memtable.insert(0, 3, "three");
+  /// memtable.insert(0, 4, "four");
+  ///
+  /// memtable.remove_range(0, Bound::Excluded(1), Bound::Unbounded);
+  ///
+  /// let mut iter = memtable.range_points(0, 2..=4);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.key(), &2);
+  /// assert_eq!(*first.value(), "two");
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.key(), &3);
+  /// assert_eq!(*second.value(), "three");
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.key(), &4);
+  /// assert_eq!(*third.value(), "four");
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn range_points<Q, R>(&self, version: u64, r: R) -> PointRange<'_, K, V, Q, R>
+  where
+    R: RangeBounds<Q>,
+    Q: ?Sized + Comparable<K>,
+  {
+    PointRange::new(version, self, r)
+  }
+
+  /// Returns an iterator over a subset of point entries (all of versions) in the memtable within the specified range.
+  /// The yield value will not be shadowed by the range operation entries.
+  ///
+  /// ## Example
+  ///
+  /// In this example, you can see that the value yield by point range is not shadowed by the range operation entries.
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.insert(0, 1, "one-v0");
+  /// memtable.insert(1, 1, "one-v1");
+  /// memtable.insert(1, 2, "two-v1");
+  /// memtable.insert(2, 3, "three-v2");
+  ///
+  /// let mut iter = memtable.range_all_points(0, 1..=3);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.key(), &1);
+  /// assert_eq!(*first.value().unwrap(), "one-v0");
+  /// assert_eq!(first.version(), 0);
+  /// assert!(iter.next().is_none());
+  ///
+  /// let mut iter = memtable.range_all_points(1, 1..=3);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.key(), &1);
+  /// assert_eq!(*first.value().unwrap(), "one-v1");
+  /// assert_eq!(first.version(), 1);
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.key(), &1);
+  /// assert_eq!(*second.value().unwrap(), "one-v0");
+  /// assert_eq!(second.version(), 0);
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.key(), &2);
+  /// assert_eq!(*third.value().unwrap(), "two-v1");
+  /// assert_eq!(third.version(), 1);
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn range_all_points<Q, R>(&self, version: u64, r: R) -> RangeAllPoints<'_, K, V, Q, R>
+  where
+    R: RangeBounds<Q>,
+    Q: ?Sized + Comparable<K>,
+  {
+    self.inner.skl.range_all_versions(version, r)
+  }
+
   /// Returns an iterator over a subset of range deletions entries in the memtable within the specified range.
   ///
   /// ## Example
@@ -581,12 +882,58 @@ where
   /// assert!(iter.next().is_none());
   /// ```
   #[inline]
-  pub fn range_bulk_deletions<Q, R>(&self, version: u64, r: R) -> RangeBulkDeletion<'_, K, V, Q, R>
+  pub fn range_bulk_deletions<Q, R>(&self, version: u64, r: R) -> BulkDeletionRange<'_, K, V, Q, R>
   where
     R: RangeBounds<Q>,
     Q: ?Sized + Comparable<K>,
   {
-    RangeBulkDeletion::new(version, self, r)
+    BulkDeletionRange::new(version, self, r)
+  }
+
+  /// Returns an iterator over a subset of range key entries (all versions) in the memtable within the specified range.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
+  /// memtable.remove_range(1, Bound::Included(1), Bound::Included(7));
+  /// memtable.remove_range(1, Bound::Included(4), Bound::Included(7));
+  ///
+  /// let mut iter = memtable.range_bulk_deletions_all_versions(2, 1..=5);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Included(&7));
+  /// assert_eq!(first.version(), 1);
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&1));
+  /// assert_eq!(second.end_bound(), Bound::Excluded(&3));
+  /// assert_eq!(second.version(), 0);
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.start_bound(), Bound::Included(&4));
+  /// assert_eq!(third.end_bound(), Bound::Included(&7));
+  /// assert_eq!(third.version(), 1);
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn range_bulk_deletions_all_versions<Q, R>(
+    &self,
+    version: u64,
+    r: R,
+  ) -> BulkDeletionRangeAll<'_, K, V, Q, R>
+  where
+    R: RangeBounds<Q>,
+    Q: ?Sized + Comparable<K>,
+  {
+    BulkDeletionRangeAll::new(version, self, r)
   }
 
   /// Returns an iterator over a subset of range key entries in the memtable within the specified range.
@@ -595,32 +942,86 @@ where
   ///
   /// ```rust
   /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
   ///
-  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3));
-  /// memtable.update_range(0, Bound::Included(4), Bound::Included(7));
-  /// memtable.update_range(0, Bound::Excluded(6), Bound::Unbounded);
+  /// memtable.insert(0, 1, "one");
   ///
-  /// let mut iter = memtable.range_bulk_updates(0, 1..=5);
+  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "[1, 3)");
+  /// memtable.update_range(1, Bound::Included(4), Bound::Included(7), "[4, 7]");
+  /// memtable.update_range(2, Bound::Excluded(6), Bound::Unbounded, "(6, +∞)");
+  ///
+  /// let mut iter = memtable.range_bulk_updates(2, 1..=5);
   ///
   /// let first = iter.next().unwrap();
   /// assert_eq!(first.start_bound(), Bound::Included(&1));
   /// assert_eq!(first.end_bound(), Bound::Excluded(&3));
+  /// assert_eq!(*first.value(), "[1, 3)");
   ///
   /// let second = iter.next().unwrap();
   /// assert_eq!(second.start_bound(), Bound::Included(&4));
   /// assert_eq!(second.end_bound(), Bound::Included(&7));
+  /// assert_eq!(*second.value(), "[4, 7]");
   ///
   /// assert!(iter.next().is_none());
   /// ```
   #[inline]
-  pub fn range_bulk_updates<Q, R>(&self, version: u64, r: R) -> RangeBulkUpdate<'_, K, V, Q, R>
+  pub fn range_bulk_updates<Q, R>(&self, version: u64, r: R) -> BulkUpdateRange<'_, K, V, Q, R>
   where
     R: RangeBounds<Q>,
     Q: ?Sized + Comparable<K>,
   {
-    RangeBulkUpdate::new(version, self, r)
+    BulkUpdateRange::new(version, self, r)
+  }
+
+  /// Returns an iterator over a subset of range key entries (all versions) in the memtable within the specified range.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "1v0");
+  /// memtable.update_range(1, Bound::Included(1), Bound::Included(7), "1v1");
+  /// memtable.update_range(1, Bound::Included(4), Bound::Included(7), "4v1");
+  ///
+  /// let mut iter = memtable.range_bulk_updates_all_versions(2, 1..=5);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Included(&7));
+  /// assert_eq!(first.version(), 1);
+  /// assert_eq!(*first.value(), "1v1");
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&1));
+  /// assert_eq!(second.end_bound(), Bound::Excluded(&3));
+  /// assert_eq!(second.version(), 0);
+  /// assert_eq!(*second.value(), "1v0");
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.start_bound(), Bound::Included(&4));
+  /// assert_eq!(third.end_bound(), Bound::Included(&7));
+  /// assert_eq!(third.version(), 1);
+  /// assert_eq!(*third.value(), "4v1");
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn range_bulk_updates_all_versions<Q, R>(
+    &self,
+    version: u64,
+    r: R,
+  ) -> BulkUpdateRangeAll<'_, K, V, Q, R>
+  where
+    R: RangeBounds<Q>,
+    Q: ?Sized + Comparable<K>,
+  {
+    BulkUpdateRangeAll::new(version, self, r)
   }
 
   fn validate<'a>(

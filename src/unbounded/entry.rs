@@ -1,7 +1,14 @@
 use {
   super::{KeySpan, Memtable, StartKey},
-  core::ops::{Bound, ControlFlow},
-  crossbeam_skiplist_mvcc::nested::Entry as MapEntry,
+  core::{
+    cmp::Ordering,
+    ops::{Bound, ControlFlow},
+  },
+  crossbeam_skiplist_mvcc::{
+    nested::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
+    Comparable,
+  },
+  either::Either,
 };
 
 pub(super) enum EntryValue<'a, K, V> {
@@ -292,189 +299,161 @@ impl<'a, K, V> RangeEntry<'a, K, V> {
   }
 }
 
-/// A range deletion entry in the `Memtable`.
-pub struct BulkDeletionEntry<'a, K, V> {
-  table: &'a Memtable<K, V>,
-  ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
-  version: u64,
-  query_version: u64,
+macro_rules! bulk_entry {
+  ($(
+    $(#[$meta:meta])*
+    $name:ident($ent:ident, $versioned_ent:ident) $( => $value:ident)?
+  ),+$(,)?) => {
+    $(
+      $(#[$meta])*
+      pub struct $name<'a, K, V> {
+        table: &'a Memtable<K, V>,
+        ent: Either<$ent<'a, StartKey<K>, KeySpan<K, V>>, $versioned_ent<'a, StartKey<K>, KeySpan<K, V>>>,
+        version: u64,
+        query_version: u64,
+      }
+
+      impl<K, V> core::fmt::Debug for $name<'_, K, V>
+      where
+        K: core::fmt::Debug,
+        V: core::fmt::Debug,
+      {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+          f.debug_struct(stringify!($name))
+            .field("version", &self.version())
+            .field("start_bound", &self.start_bound())
+            .field("end_bound", &self.end_bound())
+            $(.field("value", self.$value()))?
+            .finish()
+        }
+      }
+
+      impl<K, V> Clone for $name<'_, K, V> {
+        #[inline]
+        fn clone(&self) -> Self {
+          Self {
+            table: self.table,
+            ent: self.ent.clone(),
+            version: self.version,
+            query_version: self.query_version,
+          }
+        }
+      }
+
+      impl<'a, K, V> $name<'a, K, V> {
+        #[inline]
+        pub(super) fn new(
+          table: &'a Memtable<K, V>,
+          query_version: u64,
+          ent: $ent<'a, StartKey<K>, KeySpan<K, V>>,
+        ) -> Self {
+          Self {
+            version: ent.version(),
+            table,
+            ent: Either::Left(ent),
+            query_version,
+          }
+        }
+
+        #[inline]
+        pub(super) fn versioned(
+          table: &'a Memtable<K, V>,
+          query_version: u64,
+          ent: $versioned_ent<'a, StartKey<K>, KeySpan<K, V>>,
+        ) -> Self {
+          Self {
+            version: ent.version(),
+            table,
+            ent: Either::Right(ent),
+            query_version,
+          }
+        }
+
+        /// Returns `true` if the entry contains the key.
+        #[inline]
+        pub fn contains<Q>(&self, key: &Q) -> bool
+        where
+          Q: ?Sized + Comparable<K>,
+        {
+          (match self.start_bound() {
+            Bound::Included(start) => key.compare(start) != Ordering::Less,
+            Bound::Excluded(start) => key.compare(start) == Ordering::Greater,
+            Bound::Unbounded => true,
+          }) && (match self.end_bound() {
+            Bound::Included(end) => key.compare(end) != Ordering::Greater,
+            Bound::Excluded(end) => key.compare(end) == Ordering::Less,
+            Bound::Unbounded => true,
+          })
+        }
+
+        /// Returns the bounds of the entry.
+        #[inline]
+        pub fn bounds(&self) -> (Bound<&'a K>, Bound<&'a K>) {
+          (self.start_bound(), self.end_bound())
+        }
+
+        /// Returns the start bound of the entry.
+        #[inline]
+        pub fn start_bound(&self) -> Bound<&'a K> {
+          let (k, v) = match &self.ent {
+            Either::Left(ent) => (ent.key(), ent.value()),
+            Either::Right(ent) => (ent.key(), ent.value().unwrap()),
+          };
+
+          match k {
+            StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
+            StartKey::Minimum => Bound::Unbounded,
+          }
+        }
+
+        /// Returns the end bound of the entry.
+        #[inline]
+        pub fn end_bound(&self) -> Bound<&'a K> {
+          match &self.ent {
+            Either::Left(ent) => ent.value().end_bound.as_ref(),
+            Either::Right(ent) => ent.value().unwrap().end_bound.as_ref(),
+          }
+        }
+
+        /// Returns the version of the entry.
+        #[inline]
+        pub const fn version(&self) -> u64 {
+          self.version
+        }
+
+        $(
+          /// Returns the value of the entry.
+          #[inline]
+          pub fn $value(&self) -> &'a V {
+            match &self.ent {
+              Either::Left(ent) => ent.value().unwrap_value(),
+              Either::Right(ent) => ent.value().unwrap().unwrap_value(),
+            }
+          }
+        )?
+      }
+
+      impl<K, V> core::ops::RangeBounds<K> for $name<'_, K, V> {
+        #[inline]
+        fn start_bound(&self) -> Bound<&K> {
+          self.start_bound()
+        }
+
+        #[inline]
+        fn end_bound(&self) -> Bound<&K> {
+          self.end_bound()
+        }
+      }
+    )*
+  };
 }
 
-impl<K, V> core::fmt::Debug for BulkDeletionEntry<'_, K, V>
-where
-  K: core::fmt::Debug,
-  V: core::fmt::Debug,
-{
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("BulkDeletionEntry")
-      .field("version", &self.version())
-      .field("start_bound", &self.start_bound())
-      .field("end_bound", &self.end_bound())
-      .finish()
-  }
-}
+bulk_entry!(
+  /// A range deletion entry in the `Memtable`.
+  BulkDeletionEntry(MapEntry, MapVersionedEntry),
+);
 
-impl<K, V> Clone for BulkDeletionEntry<'_, K, V> {
-  #[inline]
-  fn clone(&self) -> Self {
-    Self {
-      table: self.table,
-      ent: self.ent.clone(),
-      version: self.version,
-      query_version: self.query_version,
-    }
-  }
-}
-
-impl<'a, K, V> BulkDeletionEntry<'a, K, V> {
-  pub(super) fn new(
-    table: &'a Memtable<K, V>,
-    query_version: u64,
-    ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
-  ) -> Self {
-    Self {
-      version: ent.version(),
-      table,
-      ent,
-      query_version,
-    }
-  }
-
-  /// Returns the bounds of the range deletion entry.
-  #[inline]
-  pub fn bounds(&self) -> (Bound<&'a K>, Bound<&'a K>) {
-    (self.start_bound(), self.end_bound())
-  }
-
-  /// Returns the start bound of the range deletion entry.
-  #[inline]
-  pub fn start_bound(&self) -> Bound<&'a K> {
-    let k = self.ent.key();
-    let v = self.ent.value();
-    match k {
-      StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
-      StartKey::Minimum => Bound::Unbounded,
-    }
-  }
-
-  /// Returns the end bound of the range deletion entry.
-  #[inline]
-  pub fn end_bound(&self) -> Bound<&'a K> {
-    self.ent.value().end_bound.as_ref()
-  }
-
-  /// Returns the version of the range deletion entry.
-  #[inline]
-  pub const fn version(&self) -> u64 {
-    self.version
-  }
-}
-
-impl<K, V> core::ops::RangeBounds<K> for BulkDeletionEntry<'_, K, V> {
-  #[inline]
-  fn start_bound(&self) -> Bound<&K> {
-    self.start_bound()
-  }
-
-  #[inline]
-  fn end_bound(&self) -> Bound<&K> {
-    self.end_bound()
-  }
-}
-
-/// A range deletion entry in the `Memtable`.
-pub struct BulkUpdateEntry<'a, K, V> {
-  table: &'a Memtable<K, V>,
-  ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
-  version: u64,
-  query_version: u64,
-}
-
-impl<K, V> core::fmt::Debug for BulkUpdateEntry<'_, K, V>
-where
-  K: core::fmt::Debug,
-  V: core::fmt::Debug,
-{
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("BulkUpdateEntry")
-      .field("version", &self.version())
-      .field("start_bound", &self.start_bound())
-      .field("end_bound", &self.end_bound())
-      .field("value", self.value())
-      .finish()
-  }
-}
-
-impl<K, V> Clone for BulkUpdateEntry<'_, K, V> {
-  #[inline]
-  fn clone(&self) -> Self {
-    Self {
-      table: self.table,
-      ent: self.ent.clone(),
-      version: self.version,
-      query_version: self.query_version,
-    }
-  }
-}
-
-impl<'a, K, V> BulkUpdateEntry<'a, K, V> {
-  pub(super) fn new(
-    table: &'a Memtable<K, V>,
-    query_version: u64,
-    ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
-  ) -> Self {
-    Self {
-      version: ent.version(),
-      table,
-      ent,
-      query_version,
-    }
-  }
-
-  /// Returns the bounds of the range update entry.
-  #[inline]
-  pub fn bounds(&self) -> (Bound<&'a K>, Bound<&'a K>) {
-    (self.start_bound(), self.end_bound())
-  }
-
-  /// Returns the start bound of the range update entry.
-  #[inline]
-  pub fn start_bound(&self) -> Bound<&'a K> {
-    let k = self.ent.key();
-    let v = self.ent.value();
-    match k {
-      StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
-      StartKey::Minimum => Bound::Unbounded,
-    }
-  }
-
-  /// Returns the end bound of the range update entry.
-  #[inline]
-  pub fn end_bound(&self) -> Bound<&'a K> {
-    self.ent.value().end_bound.as_ref()
-  }
-
-  /// Returns the version of the range update entry.
-  #[inline]
-  pub const fn version(&self) -> u64 {
-    self.version
-  }
-
-  /// Returns the value of the range update entry.
-  #[inline]
-  pub fn value(&self) -> &'a V {
-    self.ent.value().unwrap_value()
-  }
-}
-
-impl<K, V> core::ops::RangeBounds<K> for BulkUpdateEntry<'_, K, V> {
-  #[inline]
-  fn start_bound(&self) -> Bound<&K> {
-    self.start_bound()
-  }
-
-  #[inline]
-  fn end_bound(&self) -> Bound<&K> {
-    self.end_bound()
-  }
-}
+bulk_entry!(
+  /// A range update entry in the `Memtable`.
+  BulkUpdateEntry(MapEntry, MapVersionedEntry) => value,
+);

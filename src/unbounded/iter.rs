@@ -1,13 +1,20 @@
 use {
   super::{
-    BulkDeletionEntry, BulkUpdateEntry, Entry, KeySpan, Memtable, Query, QueryRange, StartKey,
+    BulkDeletionEntry, BulkUpdateEntry, Entry, EntryValue, KeySpan, Memtable, Query, QueryRange,
+    StartKey,
   },
   core::ops::{ControlFlow, RangeBounds},
   crossbeam_skiplist_mvcc::{
-    nested::{Iter as MapIter, Range as MapRange},
+    nested::{Iter as MapIter, IterAll, Range as MapRange, RangeAll},
     Comparable,
   },
 };
+
+/// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable`.
+pub type IterAllPoints<'a, K, V> = IterAll<'a, K, V>;
+
+/// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable` within the specified range.
+pub type RangeAllPoints<'a, K, V, Q, R> = RangeAll<'a, Q, R, K, V>;
 
 /// An iterator over the entries of a `Memtable`.
 pub struct Iter<'a, K, V> {
@@ -127,102 +134,253 @@ where
   }
 }
 
-/// An iterator over the range deletion entries of a `Memtable`.
-pub struct BulkDeletionIter<'a, K, V> {
+macro_rules! bulk_iter {
+  (
+    $(
+      $(#[$meta:meta])*
+      $name:ident::$new:ident($iter:ident, $entry:ident).$iterator:ident.$method:ident
+    ), +$(,)?
+  ) => {
+    $(
+      $(#[$meta])*
+      pub struct $name<'a, K, V> {
+        table: &'a Memtable<K, V>,
+        iter: $iter<'a, StartKey<K>, KeySpan<K, V>>,
+        query_version: u64,
+      }
+
+      impl<'a, K, V> $name<'a, K, V>
+      where
+        K: Ord,
+      {
+        #[inline]
+        pub(super) fn new(version: u64, table: &'a Memtable<K, V>) -> Self {
+          Self {
+            iter: table.inner.$iterator.$method(version),
+            query_version: version,
+            table,
+          }
+        }
+      }
+
+      impl<'a, K, V> Iterator for $name<'a, K, V>
+      where
+        K: Ord,
+      {
+        type Item = $entry<'a, K, V>;
+
+        #[inline]
+        fn next(&mut self) -> Option<Self::Item> {
+          self
+            .iter
+            .next()
+            .map(|ent| $entry::$new(self.table, self.query_version, ent))
+        }
+      }
+
+      impl<K, V> DoubleEndedIterator for $name<'_, K, V>
+      where
+        K: Ord,
+      {
+        #[inline]
+        fn next_back(&mut self) -> Option<Self::Item> {
+          self
+            .iter
+            .next_back()
+            .map(|ent| $entry::$new(self.table, self.query_version, ent))
+        }
+      }
+    )*
+  };
+}
+
+bulk_iter!(
+  /// An iterator over the range deletion entries of a `Memtable`.
+  BulkDeletionIter::new(MapIter, BulkDeletionEntry).range_del_skl.iter,
+  /// An iterator over the range update entries of a `Memtable`.
+  BulkUpdateIter::new(MapIter, BulkUpdateEntry).range_key_skl.iter,
+  /// An iterator over the range deletion entries of a `Memtable`.
+  BulkDeletionIterAll::versioned(IterAll, BulkDeletionEntry).range_del_skl.iter_all_versions,
+  /// An iterator over the range update entries of a `Memtable`.
+  BulkUpdateIterAll::versioned(IterAll, BulkUpdateEntry).range_key_skl.iter_all_versions,
+);
+
+macro_rules! bulk_range {
+  (
+    $(
+      $(#[$meta:meta])*
+      $name:ident::$new:ident($iter:ident, $entry:ident).$iterator:ident.$method:ident
+    ), +$(,)?
+  ) => {
+    $(
+      $(#[$meta])*
+      pub struct $name<'a, K, V, Q, R>
+      where
+        K: Ord,
+        R: RangeBounds<Q>,
+        Q: ?Sized + Comparable<K>,
+      {
+        table: &'a Memtable<K, V>,
+        iter: $iter<'a, Query<K, Q>, QueryRange<K, Q, R>, StartKey<K>, KeySpan<K, V>>,
+        query_version: u64,
+      }
+
+      impl<'a, K, V, Q, R> $name<'a, K, V, Q, R>
+      where
+        K: Ord,
+        R: RangeBounds<Q>,
+        Q: ?Sized + Comparable<K>,
+      {
+        pub(super) fn new(version: u64, table: &'a Memtable<K, V>, range: R) -> Self {
+          Self {
+            iter: table
+              .inner
+              .$iterator
+              .$method(version, QueryRange::new(range)),
+            query_version: version,
+            table,
+          }
+        }
+      }
+
+      impl<'a, K, V, Q, R> Iterator for $name<'a, K, V, Q, R>
+      where
+        K: Ord,
+        R: RangeBounds<Q>,
+        Q: ?Sized + Comparable<K>,
+      {
+        type Item = $entry<'a, K, V>;
+
+        #[inline]
+        fn next(&mut self) -> Option<Self::Item> {
+          self
+            .iter
+            .next()
+            .map(|ent| $entry::$new(self.table, self.query_version, ent))
+        }
+      }
+
+      impl<K, V, Q, R> DoubleEndedIterator for $name<'_, K, V, Q, R>
+      where
+        K: Ord,
+        R: RangeBounds<Q>,
+        Q: ?Sized + Comparable<K>,
+      {
+        #[inline]
+        fn next_back(&mut self) -> Option<Self::Item> {
+          self
+            .iter
+            .next_back()
+            .map(|ent| $entry::$new(self.table, self.query_version, ent))
+        }
+      }
+    )*
+  }
+}
+
+bulk_range!(
+  /// An iterator over the range deletion entries of a `Memtable`.
+  BulkDeletionRange::new(MapRange, BulkDeletionEntry).range_del_skl.range,
+  /// An iterator over the range update entries of a `Memtable`.
+  BulkUpdateRange::new(MapRange, BulkUpdateEntry).range_key_skl.range,
+  /// An iterator over the range deletion entries (all versions) of a `Memtable`.
+  BulkDeletionRangeAll::versioned(RangeAll, BulkDeletionEntry).range_del_skl.range_all_versions,
+  /// An iterator over the range update entries (all versions) of a `Memtable`.
+  BulkUpdateRangeAll::versioned(RangeAll, BulkUpdateEntry).range_key_skl.range_all_versions,
+);
+
+/// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable`.
+pub struct PointIter<'a, K, V> {
   table: &'a Memtable<K, V>,
-  iter: MapIter<'a, StartKey<K>, KeySpan<K, V>>,
+  iter: MapIter<'a, K, V>,
   query_version: u64,
 }
 
-impl<'a, K, V> BulkDeletionIter<'a, K, V>
+impl<'a, K, V> PointIter<'a, K, V>
 where
   K: Ord,
 {
   pub(super) fn new(version: u64, table: &'a Memtable<K, V>) -> Self {
     Self {
-      iter: table.inner.range_del_skl.iter(version),
+      iter: table.inner.skl.iter(version),
       query_version: version,
       table,
     }
   }
 }
 
-impl<'a, K, V> Iterator for BulkDeletionIter<'a, K, V>
+impl<'a, K, V> Iterator for PointIter<'a, K, V>
 where
   K: Ord,
 {
-  type Item = BulkDeletionEntry<'a, K, V>;
+  type Item = Entry<'a, K, V>;
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next()
-      .map(|ent| BulkDeletionEntry::new(self.table, self.query_version, ent))
+    self.iter.next().map(|ent| {
+      let val = ent.value();
+      Entry::new(self.table, self.query_version, ent, EntryValue::Point(val))
+    })
   }
 }
 
-impl<K, V> DoubleEndedIterator for BulkDeletionIter<'_, K, V>
+impl<K, V> DoubleEndedIterator for PointIter<'_, K, V>
 where
   K: Ord,
 {
   #[inline]
   fn next_back(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next_back()
-      .map(|ent| BulkDeletionEntry::new(self.table, self.query_version, ent))
+    self.iter.next_back().map(|ent| {
+      let val = ent.value();
+      Entry::new(self.table, self.query_version, ent, EntryValue::Point(val))
+    })
   }
 }
 
-/// An iterator over the range deletion entries of a `Memtable`.
-pub struct RangeBulkDeletion<'a, K, V, Q, R>
+/// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable`.
+pub struct PointRange<'a, K, V, Q, R>
 where
-  K: Ord,
   R: RangeBounds<Q>,
   Q: ?Sized + Comparable<K>,
 {
   table: &'a Memtable<K, V>,
-  iter: MapRange<'a, Query<K, Q>, QueryRange<K, Q, R>, StartKey<K>, KeySpan<K, V>>,
+  iter: MapRange<'a, Q, R, K, V>,
   query_version: u64,
 }
 
-impl<'a, K, V, Q, R> RangeBulkDeletion<'a, K, V, Q, R>
+impl<'a, K, V, Q, R> PointRange<'a, K, V, Q, R>
 where
   K: Ord,
   R: RangeBounds<Q>,
   Q: ?Sized + Comparable<K>,
 {
-  pub(super) fn new(version: u64, table: &'a Memtable<K, V>, range: R) -> Self {
+  pub(super) fn new(version: u64, table: &'a Memtable<K, V>, r: R) -> Self {
     Self {
-      iter: table
-        .inner
-        .range_del_skl
-        .range(version, QueryRange::new(range)),
+      iter: table.inner.skl.range(version, r),
       query_version: version,
       table,
     }
   }
 }
 
-impl<'a, K, V, Q, R> Iterator for RangeBulkDeletion<'a, K, V, Q, R>
+impl<'a, K, V, Q, R> Iterator for PointRange<'a, K, V, Q, R>
 where
   K: Ord,
   R: RangeBounds<Q>,
   Q: ?Sized + Comparable<K>,
 {
-  type Item = BulkDeletionEntry<'a, K, V>;
+  type Item = Entry<'a, K, V>;
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next()
-      .map(|ent| BulkDeletionEntry::new(self.table, self.query_version, ent))
+    self.iter.next().map(|ent| {
+      let val = ent.value();
+      Entry::new(self.table, self.query_version, ent, EntryValue::Point(val))
+    })
   }
 }
 
-impl<K, V, Q, R> DoubleEndedIterator for RangeBulkDeletion<'_, K, V, Q, R>
+impl<K, V, Q, R> DoubleEndedIterator for PointRange<'_, K, V, Q, R>
 where
   K: Ord,
   R: RangeBounds<Q>,
@@ -230,119 +388,9 @@ where
 {
   #[inline]
   fn next_back(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next_back()
-      .map(|ent| BulkDeletionEntry::new(self.table, self.query_version, ent))
-  }
-}
-
-/// An iterator over the range update entries of a `Memtable`.
-pub struct BulkUpdateIter<'a, K, V> {
-  table: &'a Memtable<K, V>,
-  iter: MapIter<'a, StartKey<K>, KeySpan<K, V>>,
-  query_version: u64,
-}
-
-impl<'a, K, V> BulkUpdateIter<'a, K, V>
-where
-  K: Ord,
-{
-  pub(super) fn new(version: u64, table: &'a Memtable<K, V>) -> Self {
-    Self {
-      iter: table.inner.range_key_skl.iter(version),
-      query_version: version,
-      table,
-    }
-  }
-}
-
-impl<'a, K, V> Iterator for BulkUpdateIter<'a, K, V>
-where
-  K: Ord,
-{
-  type Item = BulkUpdateEntry<'a, K, V>;
-
-  #[inline]
-  fn next(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next()
-      .map(|ent| BulkUpdateEntry::new(self.table, self.query_version, ent))
-  }
-}
-
-impl<K, V> DoubleEndedIterator for BulkUpdateIter<'_, K, V>
-where
-  K: Ord,
-{
-  #[inline]
-  fn next_back(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next_back()
-      .map(|ent| BulkUpdateEntry::new(self.table, self.query_version, ent))
-  }
-}
-
-/// An iterator over the range deletion entries of a `Memtable`.
-pub struct RangeBulkUpdate<'a, K, V, Q, R>
-where
-  K: Ord,
-  R: RangeBounds<Q>,
-  Q: ?Sized + Comparable<K>,
-{
-  table: &'a Memtable<K, V>,
-  iter: MapRange<'a, Query<K, Q>, QueryRange<K, Q, R>, StartKey<K>, KeySpan<K, V>>,
-  query_version: u64,
-}
-
-impl<'a, K, V, Q, R> RangeBulkUpdate<'a, K, V, Q, R>
-where
-  K: Ord,
-  R: RangeBounds<Q>,
-  Q: ?Sized + Comparable<K>,
-{
-  pub(super) fn new(version: u64, table: &'a Memtable<K, V>, range: R) -> Self {
-    Self {
-      iter: table
-        .inner
-        .range_del_skl
-        .range(version, QueryRange::new(range)),
-      query_version: version,
-      table,
-    }
-  }
-}
-
-impl<'a, K, V, Q, R> Iterator for RangeBulkUpdate<'a, K, V, Q, R>
-where
-  K: Ord,
-  R: RangeBounds<Q>,
-  Q: ?Sized + Comparable<K>,
-{
-  type Item = BulkUpdateEntry<'a, K, V>;
-
-  #[inline]
-  fn next(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next()
-      .map(|ent| BulkUpdateEntry::new(self.table, self.query_version, ent))
-  }
-}
-
-impl<K, V, Q, R> DoubleEndedIterator for RangeBulkUpdate<'_, K, V, Q, R>
-where
-  K: Ord,
-  R: RangeBounds<Q>,
-  Q: ?Sized + Comparable<K>,
-{
-  #[inline]
-  fn next_back(&mut self) -> Option<Self::Item> {
-    self
-      .iter
-      .next_back()
-      .map(|ent| BulkUpdateEntry::new(self.table, self.query_version, ent))
+    self.iter.next_back().map(|ent| {
+      let val = ent.value();
+      Entry::new(self.table, self.query_version, ent, EntryValue::Point(val))
+    })
   }
 }

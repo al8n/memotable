@@ -17,13 +17,14 @@ harness = false
 [features]
 default = ["unbounded", "bounded"]
 alloc = ["dbutils?/alloc"]
-std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std"]
+std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std", "either/default"]
 unbounded = ["std", "crossbeam-skiplist-mvcc"]
 bounded = ["dbutils"]
 
 [dependencies]
 crossbeam-skiplist-mvcc = { version = "0.2", optional = true, default-features = false }
 dbutils = { version = "0.10", default-features = false, optional = true }
+either = { version = "1", default-features = false }
 ref-cast = "1"
 
 [dev-dependencies]

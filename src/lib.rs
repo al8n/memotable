@@ -12,6 +12,8 @@ extern crate alloc as std;
 #[cfg(feature = "std")]
 extern crate std;
 
+pub use core::ops::Bound;
+
 /// A memtable implementation based on unbounded `SkipList`.
 #[cfg(feature = "unbounded")]
 #[cfg_attr(docsrs, doc(cfg(feature = "unbounded")))]
