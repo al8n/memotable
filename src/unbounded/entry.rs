@@ -1,6 +1,6 @@
 use {
   super::{KeySpan, Memtable, StartKey},
-  core::ops::ControlFlow,
+  core::ops::{Bound, ControlFlow},
   crossbeam_skiplist_mvcc::nested::Entry as MapEntry,
 };
 
@@ -108,7 +108,7 @@ where
   /// Returns the next entry in the `Memtable`.
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   /// use core::ops::Bound;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
@@ -169,7 +169,7 @@ where
   /// Returns the previous entry in the `Memtable`.
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   /// use core::ops::Bound;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
@@ -225,5 +225,256 @@ where
       }
     }
     None
+  }
+}
+
+/// A range entry in the `Memtable`.
+pub struct RangeEntry<'a, K, V> {
+  table: &'a Memtable<K, V>,
+  ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
+  query_version: u64,
+}
+
+impl<K, V> core::fmt::Debug for RangeEntry<'_, K, V>
+where
+  K: core::fmt::Debug,
+  V: core::fmt::Debug,
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("RangeEntry")
+      .field("version", &self.version())
+      .field("start", &self.start())
+      .field("end", &self.end())
+      .field("value", self.value())
+      .finish()
+  }
+}
+
+impl<K, V> Clone for RangeEntry<'_, K, V> {
+  #[inline]
+  fn clone(&self) -> Self {
+    Self {
+      table: self.table,
+      ent: self.ent.clone(),
+      query_version: self.query_version,
+    }
+  }
+}
+
+impl<'a, K, V> RangeEntry<'a, K, V> {
+  /// Returns the start bound of the range entry.
+  #[inline]
+  pub fn start(&self) -> Bound<&'a K> {
+    let k = self.ent.key();
+    let v = self.ent.value();
+    match k {
+      StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
+      StartKey::Minimum => Bound::Unbounded,
+    }
+  }
+
+  /// Returns the end bound of the range entry.
+  #[inline]
+  pub fn end(&self) -> Bound<&'a K> {
+    self.ent.value().end_bound.as_ref()
+  }
+
+  /// Returns the value of the range entry.
+  #[inline]
+  pub fn value(&self) -> &'a V {
+    self.ent.value().unwrap_value()
+  }
+
+  /// Returns the version of the range entry.
+  #[inline]
+  pub fn version(&self) -> u64 {
+    self.ent.version()
+  }
+}
+
+/// A range deletion entry in the `Memtable`.
+pub struct BulkDeletionEntry<'a, K, V> {
+  table: &'a Memtable<K, V>,
+  ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
+  version: u64,
+  query_version: u64,
+}
+
+impl<K, V> core::fmt::Debug for BulkDeletionEntry<'_, K, V>
+where
+  K: core::fmt::Debug,
+  V: core::fmt::Debug,
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("BulkDeletionEntry")
+      .field("version", &self.version())
+      .field("start_bound", &self.start_bound())
+      .field("end_bound", &self.end_bound())
+      .finish()
+  }
+}
+
+impl<K, V> Clone for BulkDeletionEntry<'_, K, V> {
+  #[inline]
+  fn clone(&self) -> Self {
+    Self {
+      table: self.table,
+      ent: self.ent.clone(),
+      version: self.version,
+      query_version: self.query_version,
+    }
+  }
+}
+
+impl<'a, K, V> BulkDeletionEntry<'a, K, V> {
+  pub(super) fn new(
+    table: &'a Memtable<K, V>,
+    query_version: u64,
+    ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
+  ) -> Self {
+    Self {
+      version: ent.version(),
+      table,
+      ent,
+      query_version,
+    }
+  }
+
+  /// Returns the bounds of the range deletion entry.
+  #[inline]
+  pub fn bounds(&self) -> (Bound<&'a K>, Bound<&'a K>) {
+    (self.start_bound(), self.end_bound())
+  }
+
+  /// Returns the start bound of the range deletion entry.
+  #[inline]
+  pub fn start_bound(&self) -> Bound<&'a K> {
+    let k = self.ent.key();
+    let v = self.ent.value();
+    match k {
+      StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
+      StartKey::Minimum => Bound::Unbounded,
+    }
+  }
+
+  /// Returns the end bound of the range deletion entry.
+  #[inline]
+  pub fn end_bound(&self) -> Bound<&'a K> {
+    self.ent.value().end_bound.as_ref()
+  }
+
+  /// Returns the version of the range deletion entry.
+  #[inline]
+  pub const fn version(&self) -> u64 {
+    self.version
+  }
+}
+
+impl<K, V> core::ops::RangeBounds<K> for BulkDeletionEntry<'_, K, V> {
+  #[inline]
+  fn start_bound(&self) -> Bound<&K> {
+    self.start_bound()
+  }
+
+  #[inline]
+  fn end_bound(&self) -> Bound<&K> {
+    self.end_bound()
+  }
+}
+
+/// A range deletion entry in the `Memtable`.
+pub struct BulkUpdateEntry<'a, K, V> {
+  table: &'a Memtable<K, V>,
+  ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
+  version: u64,
+  query_version: u64,
+}
+
+impl<K, V> core::fmt::Debug for BulkUpdateEntry<'_, K, V>
+where
+  K: core::fmt::Debug,
+  V: core::fmt::Debug,
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("BulkUpdateEntry")
+      .field("version", &self.version())
+      .field("start_bound", &self.start_bound())
+      .field("end_bound", &self.end_bound())
+      .field("value", self.value())
+      .finish()
+  }
+}
+
+impl<K, V> Clone for BulkUpdateEntry<'_, K, V> {
+  #[inline]
+  fn clone(&self) -> Self {
+    Self {
+      table: self.table,
+      ent: self.ent.clone(),
+      version: self.version,
+      query_version: self.query_version,
+    }
+  }
+}
+
+impl<'a, K, V> BulkUpdateEntry<'a, K, V> {
+  pub(super) fn new(
+    table: &'a Memtable<K, V>,
+    query_version: u64,
+    ent: MapEntry<'a, StartKey<K>, KeySpan<K, V>>,
+  ) -> Self {
+    Self {
+      version: ent.version(),
+      table,
+      ent,
+      query_version,
+    }
+  }
+
+  /// Returns the bounds of the range update entry.
+  #[inline]
+  pub fn bounds(&self) -> (Bound<&'a K>, Bound<&'a K>) {
+    (self.start_bound(), self.end_bound())
+  }
+
+  /// Returns the start bound of the range update entry.
+  #[inline]
+  pub fn start_bound(&self) -> Bound<&'a K> {
+    let k = self.ent.key();
+    let v = self.ent.value();
+    match k {
+      StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
+      StartKey::Minimum => Bound::Unbounded,
+    }
+  }
+
+  /// Returns the end bound of the range update entry.
+  #[inline]
+  pub fn end_bound(&self) -> Bound<&'a K> {
+    self.ent.value().end_bound.as_ref()
+  }
+
+  /// Returns the version of the range update entry.
+  #[inline]
+  pub const fn version(&self) -> u64 {
+    self.version
+  }
+
+  /// Returns the value of the range update entry.
+  #[inline]
+  pub fn value(&self) -> &'a V {
+    self.ent.value().unwrap_value()
+  }
+}
+
+impl<K, V> core::ops::RangeBounds<K> for BulkUpdateEntry<'_, K, V> {
+  #[inline]
+  fn start_bound(&self) -> Bound<&K> {
+    self.start_bound()
+  }
+
+  #[inline]
+  fn end_bound(&self) -> Bound<&K> {
+    self.end_bound()
   }
 }

@@ -21,8 +21,8 @@ English | [简体中文][zh-cn-url]
 
 ## Features
 
-- Lock-free, multiple version
-- Range deletions and range updates
+- Lock-free, multiple version and `no_std` compitable
+- Not only limited to point insert and get, but also support range deletions and range updates
 - Flexiable iterators and APIs for users to implement flush logic
 - Unbounded memtable based on dynamic allocated unbounded skiplist and fixed-size bounded memtable based on ARENA style skiplist.
 

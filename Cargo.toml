@@ -15,15 +15,16 @@ name = "foo"
 harness = false
 
 [features]
-default = ["std"]
-alloc = ["dbutils/alloc"]
-std = ["crossbeam-skiplist-mvcc", "smallvec-wrapper/std", "dbutils/std"]
+default = ["unbounded", "bounded"]
+alloc = ["dbutils?/alloc"]
+std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std"]
+unbounded = ["std", "crossbeam-skiplist-mvcc"]
+bounded = ["dbutils"]
 
 [dependencies]
-crossbeam-skiplist-mvcc = { version = "0.2", optional = true }
-dbutils = { version = "0.10", default-features = false }
+crossbeam-skiplist-mvcc = { version = "0.2", optional = true, default-features = false }
+dbutils = { version = "0.10", default-features = false, optional = true }
 ref-cast = "1"
-smallvec-wrapper = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 criterion = "0.5"

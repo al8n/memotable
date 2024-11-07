@@ -24,6 +24,38 @@ struct Query<K: ?Sized, Q: ?Sized> {
   key: Q,
 }
 
+struct QueryRange<K: ?Sized, Q: ?Sized, R>
+where
+  R: RangeBounds<Q>,
+{
+  r: R,
+  _q: PhantomData<(fn() -> K, fn() -> Q)>,
+}
+
+impl<K: ?Sized, Q: ?Sized, R> QueryRange<K, Q, R>
+where
+  R: RangeBounds<Q>,
+{
+  #[inline]
+  pub(super) const fn new(r: R) -> Self {
+    Self { r, _q: PhantomData }
+  }
+}
+
+impl<K: ?Sized, Q: ?Sized, R> RangeBounds<Query<K, Q>> for QueryRange<K, Q, R>
+where
+  R: RangeBounds<Q>,
+{
+  #[inline]
+  fn start_bound(&self) -> Bound<&Query<K, Q>> {
+    self.r.start_bound().map(RefCast::ref_cast)
+  }
+
+  fn end_bound(&self) -> Bound<&Query<K, Q>> {
+    self.r.end_bound().map(RefCast::ref_cast)
+  }
+}
+
 enum RangeKind<V> {
   Set(V),
   Deletion,
@@ -89,32 +121,6 @@ where
   }
 }
 
-impl<K, Q> Equivalent<Query<K, Q>> for StartKey<K>
-where
-  Q: ?Sized + Equivalent<K>,
-{
-  #[inline]
-  fn equivalent(&self, key: &Query<K, Q>) -> bool {
-    match self {
-      Self::Minimum => false,
-      Self::Key(k) => key.key.equivalent(k),
-    }
-  }
-}
-
-impl<K, Q> Comparable<Query<K, Q>> for StartKey<K>
-where
-  Q: ?Sized + Comparable<K>,
-{
-  #[inline]
-  fn compare(&self, key: &Query<K, Q>) -> Ordering {
-    match self {
-      Self::Minimum => Ordering::Less,
-      Self::Key(k) => key.key.compare(k).reverse(),
-    }
-  }
-}
-
 struct KeySpan<K, V> {
   start_bound: Bound<()>,
   /// only store the bound information, the key will be stored in the SkipMap as key.
@@ -175,7 +181,7 @@ struct Inner<K, V> {
 /// Besides, range remove entry has higher priority than range set entry.
 ///
 /// ```rust
-/// use memorable::unbounded::multiple_version::Memtable;
+/// use memorable::unbounded::Memtable;
 /// use core::ops::Bound;
 ///
 /// let memtable = Memtable::<&str, &str>::new();
@@ -225,7 +231,7 @@ impl<K, V> Memtable<K, V> {
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let memtable: Memtable<i32, i32> = Memtable::new();
   /// ```
@@ -250,7 +256,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let ages = Memtable::new();
   /// ages.insert(0, "Bill Gates", 64);
@@ -274,7 +280,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let memtable: Memtable<i32, i32> = Memtable::new();
   ///
@@ -298,7 +304,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
   ///
@@ -318,7 +324,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
   ///
@@ -343,7 +349,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   /// use std::ops::Bound::*;
   ///
   /// let numbers = Memtable::new();
@@ -377,7 +383,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   /// use std::ops::Bound::*;
   ///
   /// let numbers = Memtable::new();
@@ -407,7 +413,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   /// use core::ops::Bound;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
@@ -452,12 +458,79 @@ where
     Iter::new(version, self)
   }
 
+  /// Returns an iterator over the bulk deletion entries of the memtable.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
+  /// memtable.remove_range(0, Bound::Included(4), Bound::Included(7));
+  /// memtable.remove_range(0, Bound::Excluded(6), Bound::Unbounded);
+  ///
+  /// let mut iter = memtable.iter_bulk_deletions(0);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Excluded(&3));
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&4));
+  /// assert_eq!(second.end_bound(), Bound::Included(&7));
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.start_bound(), Bound::Excluded(&6));
+  /// assert_eq!(third.end_bound(), Bound::Unbounded);
+  /// ```
+  #[inline]
+  pub fn iter_bulk_deletions(&self, version: u64) -> BulkDeletionIter<'_, K, V> {
+    BulkDeletionIter::new(version, self)
+  }
+
+  /// Returns an iterator over the bulk update entries of the memtable.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3));
+  /// memtable.update_range(0, Bound::Included(4), Bound::Included(7));
+  /// memtable.update_range(0, Bound::Excluded(6), Bound::Unbounded);
+  ///
+  /// let mut iter = memtable.iter_bulk_updates(0);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Excluded(&3));
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&4));
+  /// assert_eq!(second.end_bound(), Bound::Included(&7));
+  ///
+  /// let third = iter.next().unwrap();
+  /// assert_eq!(third.start_bound(), Bound::Excluded(&6));
+  /// assert_eq!(third.end_bound(), Bound::Unbounded);
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn iter_bulk_updates(&self, version: u64) -> BulkUpdateIter<'_, K, V> {
+    BulkUpdateIter::new(version, self)
+  }
+
   /// Returns an iterator over a subset of the memtable within the specified range.
   ///
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let memtable = Memtable::<usize, &'static str>::new();
   ///
@@ -481,6 +554,75 @@ where
     Range::new(version, self, r)
   }
 
+  /// Returns an iterator over a subset of range deletions entries in the memtable within the specified range.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  /// use core::ops::Bound;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
+  /// memtable.remove_range(0, Bound::Included(4), Bound::Included(7));
+  /// memtable.remove_range(0, Bound::Excluded(6), Bound::Unbounded);
+  ///
+  /// let mut iter = memtable.range_bulk_deletions(0, 1..=5);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Excluded(&3));
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&4));
+  /// assert_eq!(second.end_bound(), Bound::Included(&7));
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn range_bulk_deletions<Q, R>(&self, version: u64, r: R) -> RangeBulkDeletion<'_, K, V, Q, R>
+  where
+    R: RangeBounds<Q>,
+    Q: ?Sized + Comparable<K>,
+  {
+    RangeBulkDeletion::new(version, self, r)
+  }
+
+  /// Returns an iterator over a subset of range key entries in the memtable within the specified range.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::unbounded::Memtable;
+  ///
+  /// let memtable = Memtable::<usize, &'static str>::new();
+  ///
+  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3));
+  /// memtable.update_range(0, Bound::Included(4), Bound::Included(7));
+  /// memtable.update_range(0, Bound::Excluded(6), Bound::Unbounded);
+  ///
+  /// let mut iter = memtable.range_bulk_updates(0, 1..=5);
+  ///
+  /// let first = iter.next().unwrap();
+  /// assert_eq!(first.start_bound(), Bound::Included(&1));
+  /// assert_eq!(first.end_bound(), Bound::Excluded(&3));
+  ///
+  /// let second = iter.next().unwrap();
+  /// assert_eq!(second.start_bound(), Bound::Included(&4));
+  /// assert_eq!(second.end_bound(), Bound::Included(&7));
+  ///
+  /// assert!(iter.next().is_none());
+  /// ```
+  #[inline]
+  pub fn range_bulk_updates<Q, R>(&self, version: u64, r: R) -> RangeBulkUpdate<'_, K, V, Q, R>
+  where
+    R: RangeBounds<Q>,
+    Q: ?Sized + Comparable<K>,
+  {
+    RangeBulkUpdate::new(version, self, r)
+  }
+
   fn validate<'a>(
     &'a self,
     query_version: u64,
@@ -497,7 +639,11 @@ where
       .inner
       .range_del_skl
       .range::<Query<K, K>, _>(query_version, ..=bound)
-      .any(|ent| ent.version() >= version && ent.value().range(ent.key()).contains(key));
+      .any(|ent| {
+        let del_ent_version = ent.version();
+        (version <= del_ent_version && del_ent_version <= query_version)
+          && ent.value().range(ent.key()).contains(key)
+      });
 
     if shadow {
       return ControlFlow::Continue(ent);
@@ -508,7 +654,11 @@ where
       .inner
       .range_key_skl
       .range::<Query<K, K>, _>(query_version, ..=bound)
-      .filter(|ent| ent.version() >= version && ent.value().range(ent.key()).contains(key))
+      .filter(|ent| {
+        let range_ent_version = ent.version();
+        (version <= range_ent_version && range_ent_version <= query_version)
+          && ent.value().range(ent.key()).contains(key)
+      })
       .max_by_key(|e| e.version());
 
     // check if the next entry's value should be shadowed by the range key entries.
@@ -535,7 +685,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let memtable = Memtable::new();
   /// memtable.insert(1, "key", "value");
@@ -551,7 +701,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   ///
   /// let memtable: Memtable<&str, &str> = Memtable::new();
   /// memtable.insert(0, "key", "value");
@@ -568,7 +718,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   /// use core::ops::Bound;
   ///
   /// let memtable: Memtable<i32, i32> = Memtable::new();
@@ -601,7 +751,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::unbounded::multiple_version::Memtable;
+  /// use memorable::unbounded::Memtable;
   /// use core::ops::Bound;
   ///
   /// let memtable: Memtable<i32, i32> = Memtable::new();
