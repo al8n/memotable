@@ -89,12 +89,14 @@ where
   }
 }
 
+#[non_exhaustive]
 enum RangeKind<V> {
   Set(V),
   Deletion,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 enum StartKey<K> {
   Minimum,
   Key(K),
