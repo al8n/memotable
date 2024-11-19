@@ -17,7 +17,7 @@ where
   V: ?Sized + Type,
 {
   Range(MapEntry<'a, PhantomRangeKey<K>, PhantomRangeUpdateSpan<K, V>>),
-  Point(MapEntry<'a, K, V>),
+  Point(V::Ref<'a>),
 }
 
 impl<K, V> Clone for EntryValue<'_, K, V>
@@ -43,7 +43,7 @@ where
   fn value(&self) -> &V::Ref<'a> {
     match self {
       Self::Range(ent) => ent.value().value(),
-      Self::Point(ent) => ent.value(),
+      Self::Point(ent) => ent,
     }
   }
 }

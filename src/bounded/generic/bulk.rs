@@ -5,6 +5,7 @@ use core::{
 };
 
 use either::Either;
+use ref_cast::RefCast;
 use skl::{
   generic::{Comparable, Equivalent, KeyRef, MaybeStructured, Type, TypeRef},
   VacantBuffer,
@@ -68,37 +69,37 @@ where
   }
 }
 
-// struct QueryRange<K: ?Sized, Q: ?Sized, R>
-// where
-//   R: RangeBounds<Q>,
-// {
-//   r: R,
-//   _q: PhantomData<(fn() -> K, fn() -> Q)>,
-// }
+pub(super) struct QueryRange<Q: ?Sized, R>
+where
+  R: RangeBounds<Q>,
+{
+  r: R,
+  _q: PhantomData<Q>,
+}
 
-// impl<K: ?Sized, Q: ?Sized, R> QueryRange<K, Q, R>
-// where
-//   R: RangeBounds<Q>,
-// {
-//   #[inline]
-//   pub(super) const fn new(r: R) -> Self {
-//     Self { r, _q: PhantomData }
-//   }
-// }
+impl<Q: ?Sized, R> QueryRange<Q, R>
+where
+  R: RangeBounds<Q>,
+{
+  #[inline]
+  pub(super) const fn new(r: R) -> Self {
+    Self { r, _q: PhantomData }
+  }
+}
 
-// impl<K: ?Sized, Q: ?Sized, R> RangeBounds<Query<K, Q>> for QueryRange<K, Q, R>
-// where
-//   R: RangeBounds<Q>,
-// {
-//   #[inline]
-//   fn start_bound(&self) -> Bound<&Query<K, Q>> {
-//     self.r.start_bound().map(RefCast::ref_cast)
-//   }
+impl<Q: ?Sized, R> RangeBounds<Query<Q>> for QueryRange<Q, R>
+where
+  R: RangeBounds<Q>,
+{
+  #[inline]
+  fn start_bound(&self) -> Bound<&Query<Q>> {
+    self.r.start_bound().map(RefCast::ref_cast)
+  }
 
-//   fn end_bound(&self) -> Bound<&Query<K, Q>> {
-//     self.r.end_bound().map(RefCast::ref_cast)
-//   }
-// }
+  fn end_bound(&self) -> Bound<&Query<Q>> {
+    self.r.end_bound().map(RefCast::ref_cast)
+  }
+}
 
 pub(super) struct RangeKeyRef<'a, K>
 where
