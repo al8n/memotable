@@ -1,5 +1,6 @@
 use core::{
   borrow::Borrow,
+  cmp,
   ops::{Bound, ControlFlow, RangeBounds},
 };
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use skl::{
       sync::{Entry as MapEntry, SkipMap},
       Map,
     },
-    Ascend, Comparator,
+    Ascend, Comparator, Equivalentor,
   },
   Allocator, Arena, KeyBuilder, VacantBuffer, ValueBuilder,
 };
@@ -22,18 +23,78 @@ use skl::{
 mod entry;
 pub use entry::*;
 
+mod iter;
+pub use iter::*;
+
 const UNBOUNDED: u8 = 0;
 const INCLUDED: u8 = 1;
 const EXCLUDED: u8 = 2;
 
-struct StartKeyComparator<C = Ascend> {
+struct RangeKeyComparator<C = Ascend> {
   cmp: Arc<C>,
+}
+
+impl<C> Clone for RangeKeyComparator<C> {
+  #[inline]
+  fn clone(&self) -> Self {
+    Self {
+      cmp: self.cmp.clone(),
+    }
+  }
+}
+
+impl<C: core::fmt::Debug> core::fmt::Debug for RangeKeyComparator<C> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_tuple("RangeKeyComparator")
+      .field(&*self.cmp)
+      .finish()
+  }
+}
+
+impl<C: Equivalentor> Equivalentor for RangeKeyComparator<C> {
+  #[inline]
+  fn equivalent(&self, a: &[u8], b: &[u8]) -> bool {
+    let a = RangeKeyEncoder::decode(a);
+    let b = RangeKeyEncoder::decode(b);
+
+    match (a.0, b.0) {
+      (Bound::Included(a), Bound::Included(b)) => self.cmp.equivalent(a, b),
+      (Bound::Included(a), Bound::Excluded(b)) => self.cmp.equivalent(a, b),
+      (Bound::Included(_), Bound::Unbounded) => false,
+      (Bound::Excluded(a), Bound::Included(b)) => self.cmp.equivalent(a, b),
+      (Bound::Excluded(a), Bound::Excluded(b)) => self.cmp.equivalent(a, b),
+      (Bound::Excluded(_), Bound::Unbounded) => false,
+      (Bound::Unbounded, Bound::Included(_)) => false,
+      (Bound::Unbounded, Bound::Excluded(_)) => false,
+      (Bound::Unbounded, Bound::Unbounded) => true,
+    }
+  }
+}
+
+impl<C: Comparator> Comparator for RangeKeyComparator<C> {
+  #[inline]
+  fn compare(&self, a: &[u8], b: &[u8]) -> core::cmp::Ordering {
+    let a = RangeKeyEncoder::decode(a);
+    let b = RangeKeyEncoder::decode(b);
+
+    match (a.0, b.0) {
+      (Bound::Included(a), Bound::Included(b)) => self.cmp.compare(a, b),
+      (Bound::Included(a), Bound::Excluded(b)) => self.cmp.compare(a, b),
+      (Bound::Included(_), Bound::Unbounded) => cmp::Ordering::Greater,
+      (Bound::Excluded(a), Bound::Included(b)) => self.cmp.compare(a, b),
+      (Bound::Excluded(a), Bound::Excluded(b)) => self.cmp.compare(a, b),
+      (Bound::Excluded(_), Bound::Unbounded) => cmp::Ordering::Greater,
+      (Bound::Unbounded, Bound::Included(_)) => cmp::Ordering::Less,
+      (Bound::Unbounded, Bound::Excluded(_)) => cmp::Ordering::Less,
+      (Bound::Unbounded, Bound::Unbounded) => cmp::Ordering::Equal,
+    }
+  }
 }
 
 #[derive(Copy, Clone)]
 struct StartKey<'a>(Bound<&'a [u8]>);
 
-impl<'a> StartKey<'a> {
+impl StartKey<'_> {
   #[inline]
   fn len(&self) -> usize {
     match self.0 {
@@ -43,9 +104,9 @@ impl<'a> StartKey<'a> {
   }
 }
 
-struct KeySpan<'a>(&'a [u8]);
+struct RawKeySpan<'a>(&'a [u8]);
 
-impl<'a> KeySpan<'a> {
+impl<'a> RawKeySpan<'a> {
   #[inline]
   fn range(&self, start_key: &'a [u8]) -> impl RangeBounds<[u8]> + 'a {
     let (bound, key) = start_key.split_at(1);
@@ -75,8 +136,9 @@ impl<'a> KeySpan<'a> {
 struct Inner<C = Ascend> {
   skl: SkipMap<Arc<C>>,
   // key is the start bound
-  range_del_skl: SkipMap<Arc<C>>,
-  range_key_skl: SkipMap<Arc<C>>,
+  range_del_skl: SkipMap<RangeKeyComparator<C>>,
+  range_key_skl: SkipMap<RangeKeyComparator<C>>,
+  cmp: Arc<C>,
 }
 
 /// Memtable with dynamic key-value types based on bounded `SkipList`.
@@ -126,6 +188,11 @@ impl<C> Memtable<C> {
     // `skl`, `range_del_skl`, and `range_key_skl` are sharing the same underlying allocator.
     // So we only need to check one of them.
     self.inner.skl.allocator().refs()
+  }
+
+  #[inline]
+  fn comparator(&self) -> &C {
+    &self.inner.cmp
   }
 }
 
@@ -318,7 +385,7 @@ where
       .any(|ent| {
         let del_ent_version = ent.version();
         (version <= del_ent_version && del_ent_version <= query_version)
-          && KeySpan(ent.value()).range(ent.key()).contains(key)
+          && RawKeySpan(ent.value()).range(ent.key()).contains(key)
       });
 
     if shadow {
@@ -333,7 +400,7 @@ where
       .filter(|ent| {
         let range_ent_version = ent.version();
         (version <= range_ent_version && range_ent_version <= query_version)
-          && KeySpan(ent.value()).range(ent.key()).contains(key)
+          && RawKeySpan(ent.value()).range(ent.key()).contains(key)
       })
       .max_by_key(|e| e.version());
 
@@ -428,13 +495,9 @@ where
     R: RangeBounds<Q>,
     Q: ?Sized + Borrow<[u8]>,
   {
-    let start = range.start_bound();
-    let start_bound = start.as_ref().map(|_| ());
-    let start = StartKey(start.map(Borrow::borrow));
-
+    let start = StartKey(range.start_bound().map(Borrow::borrow));
     let kenc = RangeKeyEncoder::new(start);
-    let span_enc =
-      RangeDeletionSpanEncoder::new(start_bound, range.end_bound().map(Borrow::borrow));
+    let span_enc = RangeDeletionSpan::new(range.end_bound().map(Borrow::borrow));
     let kb = |buf: &mut VacantBuffer<'_>| kenc.encode(buf);
     let vb = |buf: &mut VacantBuffer<'_>| span_enc.encode(buf);
     self
@@ -476,13 +539,9 @@ where
     R: RangeBounds<Q>,
     Q: ?Sized + Borrow<[u8]>,
   {
-    let start = range.start_bound();
-    let start_bound = start.as_ref().map(|_| ());
-    let start = StartKey(start.map(Borrow::borrow));
-
+    let start = StartKey(range.start_bound().map(Borrow::borrow));
     let kenc = RangeKeyEncoder::new(start);
-    let span_enc = RangeUpdateSpanEncoder::new(
-      start_bound,
+    let span_enc = RangeUpdateSpan::new(
       range.end_bound().map(Borrow::borrow),
       value.borrow(),
     );
@@ -550,24 +609,34 @@ impl<'a> RangeKeyEncoder<'a> {
       _ => unreachable!("invalid bound kind"),
     }
   }
+
+  #[inline]
+  fn decode<'b>(buf: &'b [u8]) -> StartKey<'b> {
+    let (kind, key) = buf.split_at(1);
+    StartKey(match kind[0] {
+      INCLUDED => Bound::Included(key),
+      EXCLUDED => Bound::Excluded(key),
+      UNBOUNDED => Bound::Unbounded,
+      _ => unreachable!("invalid bound kind"),
+    })
+  }
 }
 
-struct RangeDeletionSpanEncoder<'a> {
-  start_bound: Bound<()>,
+#[derive(Copy, Clone)]
+struct RangeDeletionSpan<'a> {
   end_bound: Bound<&'a [u8]>,
   encoded_len: usize,
 }
 
-impl<'a> RangeDeletionSpanEncoder<'a> {
+impl<'a> RangeDeletionSpan<'a> {
   #[inline]
-  const fn new(start_bound: Bound<()>, end_bound: Bound<&'a [u8]>) -> Self {
+  const fn new(end_bound: Bound<&'a [u8]>) -> Self {
     let end_len = match end_bound {
       Bound::Included(key) | Bound::Excluded(key) => 1 + key.len(),
       Bound::Unbounded => 1,
     };
 
     Self {
-      start_bound,
       end_bound,
       encoded_len: 1 + end_len, // start bound byte + end bound byte + end key
     }
@@ -575,31 +644,48 @@ impl<'a> RangeDeletionSpanEncoder<'a> {
 
   #[inline]
   fn encode(&self, buf: &mut VacantBuffer<'_>) -> Result<usize, InsufficientBuffer> {
-    match self.start_bound {
-      Bound::Included(_) => buf.put_u8(INCLUDED),
-      Bound::Excluded(_) => buf.put_u8(EXCLUDED),
-      Bound::Unbounded => buf.put_u8(UNBOUNDED),
+    macro_rules! encode_deletion_end_key {
+      ($this:ident($end_bound:ident, $buf:ident $(, $k:ident)?)) => {{
+        $buf.put_u8($end_bound) $(.and_then(|_| $buf.put_slice($k)))? .map(|_| $this.encoded_len)
+      }};
     }
-    .and_then(|_| match self.end_bound {
-      Bound::Included(key) => buf.put_u8(INCLUDED).and_then(|_| buf.put_slice(key)),
-      Bound::Excluded(key) => buf.put_u8(EXCLUDED).and_then(|_| buf.put_slice(key)),
-      Bound::Unbounded => buf.put_u8(UNBOUNDED),
-    })
-    .map(|_| self.encoded_len)
+
+    match self.end_bound {
+      Bound::Included(k) => encode_deletion_end_key!(self(INCLUDED, buf, k)),
+      Bound::Excluded(k) => encode_deletion_end_key!(self(EXCLUDED, buf, k)),
+      Bound::Unbounded => encode_deletion_end_key!(self(UNBOUNDED, buf)),
+    }
+  }
+
+  #[inline]
+  fn decode(buf: &'a [u8]) -> Self {
+    let (bound, remaining) = buf.split_at(1);
+
+    let end_bound = match bound[0] {
+      INCLUDED => Bound::Included(remaining),
+      EXCLUDED => Bound::Excluded(remaining),
+      UNBOUNDED => Bound::Unbounded,
+      _ => unreachable!("invalid bound kind"),
+    };
+
+    Self {
+      end_bound,
+      encoded_len: buf.len(),
+    }
   }
 }
 
-struct RangeUpdateSpanEncoder<'a> {
-  start_bound: Bound<()>,
+#[derive(Copy, Clone)]
+struct RangeUpdateSpan<'a> {
   end_bound: Bound<&'a [u8]>,
   end_key_len: u32,
   encoded_len: usize,
   value: &'a [u8],
 }
 
-impl<'a> RangeUpdateSpanEncoder<'a> {
+impl<'a> RangeUpdateSpan<'a> {
   #[inline]
-  const fn new(start_bound: Bound<()>, end_bound: Bound<&'a [u8]>, value: &'a [u8]) -> Self {
+  const fn new(end_bound: Bound<&'a [u8]>, value: &'a [u8]) -> Self {
     const END_KEY_LEN_SIZE: usize = core::mem::size_of::<u32>();
 
     let (end_len, end_key_len) = match end_bound {
@@ -611,40 +697,58 @@ impl<'a> RangeUpdateSpanEncoder<'a> {
     };
 
     Self {
-      start_bound,
       end_bound,
       end_key_len,
-      encoded_len: 1 + end_len + value.len(), // start bound byte + end bound byte + end key len size + end key + value
+      encoded_len: end_len + value.len(), // end bound byte + end key len size + end key + value
       value,
     }
   }
 
+  const UNBOUNDED_SLICE: [u8; 5] = {
+    let zero = 0u32.to_le_bytes();
+    [UNBOUNDED, zero[0], zero[1], zero[2], zero[3]]
+  };
+
   #[inline]
   fn encode(&self, buf: &mut VacantBuffer<'_>) -> Result<usize, InsufficientBuffer> {
-    const UNBOUNDED_SLICE: [u8; 5] = {
-      let zero = 0u32.to_le_bytes();
-      [UNBOUNDED, zero[0], zero[1], zero[2], zero[3]]
+    macro_rules! encode_end_key {
+      ($this:ident($end_bound:ident, $buf:ident, $k:ident)) => {{
+        $buf
+          .put_u8($end_bound)
+          .and_then(|_| $buf.put_u32_le($this.end_key_len))
+          .and_then(|_| $buf.put_slice($k))
+          .and_then(|_| $buf.put_slice($this.value))
+          .map(|_| $this.encoded_len)
+      }};
+    }
+
+    match self.end_bound {
+      Bound::Included(k) => encode_end_key!(self(INCLUDED, buf, k)),
+      Bound::Excluded(k) => encode_end_key!(self(EXCLUDED, buf, k)),
+      Bound::Unbounded => buf
+        .put_slice(&Self::UNBOUNDED_SLICE)
+        .map(|_| Self::UNBOUNDED_SLICE.len()),
+    }
+  }
+
+  #[inline]
+  fn decode(buf: &'a [u8]) -> Self {
+    let (bound, key) = buf.split_at(1);
+
+    let end_key_len = u32::from_le_bytes(key[..4].try_into().unwrap());
+    let (end_key, value) = key[4..].split_at(end_key_len as usize);
+    let end_bound = match bound[0] {
+      INCLUDED => Bound::Included(end_key),
+      EXCLUDED => Bound::Excluded(end_key),
+      UNBOUNDED => Bound::Unbounded,
+      _ => unreachable!("invalid bound kind"),
     };
 
-    match self.start_bound {
-      Bound::Included(_) => buf.put_u8(INCLUDED),
-      Bound::Excluded(_) => buf.put_u8(EXCLUDED),
-      Bound::Unbounded => buf.put_u8(UNBOUNDED),
+    Self {
+      end_bound,
+      end_key_len,
+      value,
+      encoded_len: buf.len(),
     }
-    .and_then(|_| match self.end_bound {
-      Bound::Included(key) => buf.put_u8(INCLUDED).and_then(|_| {
-        buf
-          .put_u32_le(self.end_key_len)
-          .and_then(|_| buf.put_slice(key))
-      }),
-      Bound::Excluded(key) => buf.put_u8(EXCLUDED).and_then(|_| {
-        buf
-          .put_u32_le(self.end_key_len)
-          .and_then(|_| buf.put_slice(key))
-      }),
-      Bound::Unbounded => buf.put_slice(&UNBOUNDED_SLICE),
-    })
-    .and_then(|_| buf.put_slice(self.value))
-    .map(|_| self.encoded_len)
   }
 }

@@ -1,16 +1,22 @@
 use {
-  super::Memtable,
+  super::{
+    Memtable, RangeDeletionSpan, RangeKeyComparator, RangeKeyEncoder, RangeUpdateSpan, StartKey,
+  },
   core::{
+    borrow::Borrow,
     cmp::Ordering,
     ops::{Bound, ControlFlow},
   },
   either::Either,
-  skl::dynamic::{multiple_version::sync::Entry as MapEntry, Comparator},
+  skl::dynamic::{
+    multiple_version::sync::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
+    Comparator,
+  },
   std::sync::Arc,
 };
 
 pub(super) enum EntryValue<'a, C> {
-  Range(MapEntry<'a, Arc<C>>),
+  Range(MapEntry<'a, RangeKeyComparator<C>>),
   Point(&'a [u8]),
 }
 
@@ -229,193 +235,187 @@ where
   }
 }
 
-// macro_rules! bulk_entry {
-//   ($(
-//     $(#[$meta:meta])*
-//     $name:ident($ent:ident, $versioned_ent:ident) $( => $value:ident)?
-//   ),+$(,)?) => {
-//     $(
-//       $(#[$meta])*
-//       pub struct $name<'a, C> {
-//         table: &'a Memtable<C>,
-//         ent: Either<$ent<'a, StartKey<K>, KeySpan<C>>, $versioned_ent<'a, StartKey<K>, KeySpan<C>>>,
-//         version: u64,
-//         query_version: u64,
-//       }
+macro_rules! bulk_entry {
+  ($(
+    $(#[$meta:meta])*
+    $name:ident($span:ident)($ent:ident, $versioned_ent:ident) $( => $value:ident)?
+  ),+$(,)?) => {
+    $(
+      $(#[$meta])*
+      pub struct $name<'a, C> {
+        table: &'a Memtable<C>,
+        ent: Either<$ent<'a, RangeKeyComparator<C>>, $versioned_ent<'a, RangeKeyComparator<C>>>,
+        key: StartKey<'a>,
+        span: $span<'a>,
+        version: u64,
+        query_version: u64,
+      }
 
-//       impl<C> core::fmt::Debug for $name<'_, C>
-//       where
-//         K: core::fmt::Debug,
-//         V: core::fmt::Debug,
-//       {
-//         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-//           f.debug_struct(stringify!($name))
-//             .field("version", &self.version())
-//             .field("start_bound", &self.start_bound())
-//             .field("end_bound", &self.end_bound())
-//             $(.field("value", self.$value()))?
-//             .finish()
-//         }
-//       }
+      impl<C> core::fmt::Debug for $name<'_, C>
+      {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+          f.debug_struct(stringify!($name))
+            .field("version", &self.version())
+            .field("start_bound", &self.start_bound())
+            .field("end_bound", &self.end_bound())
+            $(.field("value", &self.$value()))?
+            .finish()
+        }
+      }
 
-//       impl<C> Clone for $name<'_, C> {
-//         #[inline]
-//         fn clone(&self) -> Self {
-//           Self {
-//             table: self.table,
-//             ent: self.ent.clone(),
-//             version: self.version,
-//             query_version: self.query_version,
-//           }
-//         }
-//       }
+      impl<C> Clone for $name<'_, C> {
+        #[inline]
+        fn clone(&self) -> Self {
+          Self {
+            table: self.table,
+            ent: self.ent.clone(),
+            key: self.key,
+            span: self.span,
+            version: self.version,
+            query_version: self.query_version,
+          }
+        }
+      }
 
-//       impl<'a, C> $name<'a, C> {
-//         #[inline]
-//         pub(super) fn new(
-//           table: &'a Memtable<C>,
-//           query_version: u64,
-//           ent: $ent<'a, StartKey<K>, KeySpan<C>>,
-//         ) -> Self {
-//           Self {
-//             version: ent.version(),
-//             table,
-//             ent: Either::Left(ent),
-//             query_version,
-//           }
-//         }
+      impl<'a, C> $name<'a, C> {
+        #[inline]
+        pub(super) fn new(
+          table: &'a Memtable<C>,
+          query_version: u64,
+          ent: $ent<'a, RangeKeyComparator<C>>,
+        ) -> Self {
+          Self {
+            version: ent.version(),
+            table,
+            key: RangeKeyEncoder::decode(ent.key()),
+            span: $span::decode(ent.value()),
+            ent: Either::Left(ent),
+            query_version,
+          }
+        }
 
-//         #[inline]
-//         pub(super) fn versioned(
-//           table: &'a Memtable<C>,
-//           query_version: u64,
-//           ent: $versioned_ent<'a, StartKey<K>, KeySpan<C>>,
-//         ) -> Self {
-//           Self {
-//             version: ent.version(),
-//             table,
-//             ent: Either::Right(ent),
-//             query_version,
-//           }
-//         }
+        #[inline]
+        pub(super) fn versioned(
+          table: &'a Memtable<C>,
+          query_version: u64,
+          ent: $versioned_ent<'a, RangeKeyComparator<C>>,
+        ) -> Self {
+          Self {
+            version: ent.version(),
+            table,
+            key: RangeKeyEncoder::decode(ent.key()),
+            span: $span::decode(ent.value().unwrap()),
+            ent: Either::Right(ent),
+            query_version,
+          }
+        }
 
-//         /// Returns `true` if the entry contains the key.
-//         #[inline]
-//         pub fn contains<Q>(&self, key: &Q) -> bool
-//         where
-//           Q: ?Sized + Comparable<K>,
-//         {
-//           (match self.start_bound() {
-//             Bound::Included(start) => key.compare(start) != Ordering::Less,
-//             Bound::Excluded(start) => key.compare(start) == Ordering::Greater,
-//             Bound::Unbounded => true,
-//           }) && (match self.end_bound() {
-//             Bound::Included(end) => key.compare(end) != Ordering::Greater,
-//             Bound::Excluded(end) => key.compare(end) == Ordering::Less,
-//             Bound::Unbounded => true,
-//           })
-//         }
+        /// Returns `true` if the entry contains the key.
+        #[inline]
+        pub fn contains<Q>(&self, key: &Q) -> bool
+        where
+          Q: ?Sized + Borrow<[u8]>,
+          C: Comparator,
+        {
+          let cmp = self.table.comparator();
+          let key = key.borrow();
+          (match self.start_bound() {
+            Bound::Included(start) => cmp.compare(key, start) != Ordering::Less,
+            Bound::Excluded(start) => cmp.compare(key, start) == Ordering::Greater,
+            Bound::Unbounded => true,
+          }) && (match self.end_bound() {
+            Bound::Included(end) => cmp.compare(key, end) != Ordering::Greater,
+            Bound::Excluded(end) => cmp.compare(key, end) == Ordering::Less,
+            Bound::Unbounded => true,
+          })
+        }
 
-//         /// Returns the bounds of the entry.
-//         #[inline]
-//         pub fn bounds(&self) -> (Bound<&'a K>, Bound<&'a K>) {
-//           (self.start_bound(), self.end_bound())
-//         }
+        /// Returns the bounds of the entry.
+        #[inline]
+        pub fn bounds(&self) -> (Bound<&'a [u8]>, Bound<&'a [u8]>) {
+          (self.start_bound(), self.end_bound())
+        }
 
-//         /// Returns the start bound of the entry.
-//         #[inline]
-//         pub fn start_bound(&self) -> Bound<&'a K> {
-//           let (k, v) = match &self.ent {
-//             Either::Left(ent) => (ent.key(), ent.value()),
-//             Either::Right(ent) => (ent.key(), ent.value().unwrap()),
-//           };
+        /// Returns the start bound of the entry.
+        #[inline]
+        pub fn start_bound(&self) -> Bound<&'a [u8]> {
+          self.key.0
+        }
 
-//           match k {
-//             StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
-//             StartKey::Minimum => Bound::Unbounded,
-//           }
-//         }
+        /// Returns the end bound of the entry.
+        #[inline]
+        pub fn end_bound(&self) -> Bound<&'a [u8]> {
+          self.span.end_bound
+        }
 
-//         /// Returns the end bound of the entry.
-//         #[inline]
-//         pub fn end_bound(&self) -> Bound<&'a K> {
-//           match &self.ent {
-//             Either::Left(ent) => ent.value().end_bound.as_ref(),
-//             Either::Right(ent) => ent.value().unwrap().end_bound.as_ref(),
-//           }
-//         }
+        /// Returns the version of the entry.
+        #[inline]
+        pub const fn version(&self) -> u64 {
+          self.version
+        }
 
-//         /// Returns the version of the entry.
-//         #[inline]
-//         pub const fn version(&self) -> u64 {
-//           self.version
-//         }
+        /// Moves to the next entry.
+        #[inline]
+        pub fn next(&self) -> Option<Self>
+        where
+          C: Comparator,
+        {
+          match &self.ent {
+            Either::Left(ent) => {
+              ent.next().map(|ent| $name::new(self.table, self.query_version, ent))
+            },
+            Either::Right(ent) => {
+              ent.next().map(|ent| $name::versioned(self.table, self.query_version, ent))
+            },
+          }
+        }
 
-//         /// Moves to the next entry.
-//         #[inline]
-//         pub fn next(&self) -> Option<Self>
-//         where
-//           K: Ord,
-//         {
-//           match &self.ent {
-//             Either::Left(ent) => {
-//               ent.next().map(|ent| $name::new(self.table, self.query_version, ent))
-//             },
-//             Either::Right(ent) => {
-//               ent.next().map(|ent| $name::versioned(self.table, self.query_version, ent))
-//             },
-//           }
-//         }
+        /// Moves to the previous entry.
+        #[inline]
+        pub fn prev(&self) -> Option<Self>
+        where
+          C: Comparator,
+        {
+          match &self.ent {
+            Either::Left(ent) => {
+              ent.prev().map(|ent| $name::new(self.table, self.query_version, ent))
+            },
+            Either::Right(ent) => {
+              ent.prev().map(|ent| $name::versioned(self.table, self.query_version, ent))
+            },
+          }
+        }
 
-//         /// Moves to the previous entry.
-//         #[inline]
-//         pub fn prev(&self) -> Option<Self>
-//         where
-//           K: Ord,
-//         {
-//           match &self.ent {
-//             Either::Left(ent) => {
-//               ent.prev().map(|ent| $name::new(self.table, self.query_version, ent))
-//             },
-//             Either::Right(ent) => {
-//               ent.prev().map(|ent| $name::versioned(self.table, self.query_version, ent))
-//             },
-//           }
-//         }
+        $(
+          /// Returns the value of the entry.
+          #[inline]
+          pub const fn $value(&self) -> &'a [u8] {
+            self.span.value
+          }
+        )?
+      }
 
-//         $(
-//           /// Returns the value of the entry.
-//           #[inline]
-//           pub fn $value(&self) -> &'a V {
-//             match &self.ent {
-//               Either::Left(ent) => ent.value().unwrap_value(),
-//               Either::Right(ent) => ent.value().unwrap().unwrap_value(),
-//             }
-//           }
-//         )?
-//       }
+      impl<C> core::ops::RangeBounds<[u8]> for $name<'_, C> {
+        #[inline]
+        fn start_bound(&self) -> Bound<&[u8]> {
+          self.start_bound()
+        }
 
-//       impl<C> core::ops::RangeBounds<K> for $name<'_, C> {
-//         #[inline]
-//         fn start_bound(&self) -> Bound<&K> {
-//           self.start_bound()
-//         }
+        #[inline]
+        fn end_bound(&self) -> Bound<&[u8]> {
+          self.end_bound()
+        }
+      }
+    )*
+  };
+}
 
-//         #[inline]
-//         fn end_bound(&self) -> Bound<&K> {
-//           self.end_bound()
-//         }
-//       }
-//     )*
-//   };
-// }
+bulk_entry!(
+  /// A range deletion entry in the `Memtable`.
+  BulkDeletionEntry(RangeDeletionSpan)(MapEntry, MapVersionedEntry),
+);
 
-// bulk_entry!(
-//   /// A range deletion entry in the `Memtable`.
-//   BulkDeletionEntry(MapEntry, MapVersionedEntry),
-// );
-
-// bulk_entry!(
-//   /// A range update entry in the `Memtable`.
-//   BulkUpdateEntry(MapEntry, MapVersionedEntry) => value,
-// );
+bulk_entry!(
+  /// A range update entry in the `Memtable`.
+  BulkUpdateEntry(RangeUpdateSpan)(MapEntry, MapVersionedEntry) => value,
+);
