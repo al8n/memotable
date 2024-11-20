@@ -8,3 +8,9 @@ mod options;
 pub use options::Options;
 
 pub use skl::error::{ArenaError, Error};
+
+mod sealed {
+  pub trait Constructable: Sized {
+    fn construct(opts: super::Options) -> Result<Self, super::Error>;
+  }
+}

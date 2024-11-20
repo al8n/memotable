@@ -29,7 +29,7 @@ where
   fn clone(&self) -> Self {
     match self {
       Self::Range(ent) => Self::Range(ent.clone()),
-      Self::Point(ent) => Self::Point(ent.clone()),
+      Self::Point(ent) => Self::Point(*ent),
     }
   }
 }

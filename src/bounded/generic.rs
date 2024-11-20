@@ -1,9 +1,7 @@
+use super::sealed::Constructable;
+
 use {
-  core::{
-    cmp::Ordering,
-    marker::PhantomData,
-    ops::{Bound, ControlFlow, RangeBounds},
-  },
+  core::ops::{Bound, ControlFlow, RangeBounds},
   either::Either,
   iter::*,
   ref_cast::RefCast,
@@ -14,7 +12,7 @@ use {
         sync::{Entry as MapEntry, SkipMap},
         Map,
       },
-      Comparable, Equivalent, KeyRef, MaybeStructured, Type,
+      Comparable, KeyRef, MaybeStructured, Type,
     },
     KeyBuilder, VacantBuffer, ValueBuilder,
   },
@@ -22,6 +20,7 @@ use {
 };
 
 pub use skl::{among, either, error::Error};
+use skl::{generic::Builder, Arena};
 
 pub use entry::*;
 
@@ -41,39 +40,6 @@ enum RangeKind<V> {
   Set(V),
   Deletion,
 }
-
-// impl<K, V> KeySpan<K, V> {
-//   #[inline]
-//   const fn new(start_bound: Bound<()>, end_bound: Bound<K>, value: RangeKind<V>) -> Self {
-//     Self {
-//       start_bound,
-//       end_bound,
-//       value,
-//     }
-//   }
-
-//   #[inline]
-//   fn range<'a>(&'a self, start_key: &'a StartKey<K>) -> impl RangeBounds<K> + 'a {
-//     let start_bound = match start_key {
-//       StartKey::Key(k) => match self.start_bound {
-//         Bound::Included(_) => Bound::Included(k),
-//         Bound::Excluded(_) => Bound::Excluded(k),
-//         Bound::Unbounded => Bound::Unbounded,
-//       },
-//       StartKey::Minimum => Bound::Unbounded,
-//     };
-
-//     (start_bound, self.end_bound.as_ref())
-//   }
-
-//   #[inline]
-//   const fn unwrap_value(&self) -> &V {
-//     match &self.value {
-//       RangeKind::Set(v) => v,
-//       RangeKind::Deletion => panic!("invoke unwrap value on deletion span"),
-//     }
-//   }
-// }
 
 struct Inner<K: ?Sized, V: ?Sized> {
   skl: SkipMap<K, V>,
@@ -133,32 +99,35 @@ impl<K: ?Sized, V: ?Sized> Clone for Memtable<K, V> {
   }
 }
 
-// impl<K: ?Sized, V: ?Sized> Default for Memtable<K, V> {
-//   fn default() -> Self {
-//     Self::new()
-//   }
-// }
+impl<K, V> Constructable for Memtable<K, V>
+where
+  K: ?Sized + 'static,
+  V: ?Sized + 'static,
+{
+  #[inline]
+  fn construct(opts: super::Options) -> Result<Self, super::Error> {
+    let skl_opts = opts.to_skl_options();
+    let skl = Builder::new()
+      .with_options(skl_opts)
+      .alloc::<SkipMap<K, V>>()?;
+    let allocator = skl.allocator().clone();
+    let range_del_skl =
+      SkipMap::<PhantomRangeKey<K>, PhantomRangeDeletionSpan<K>>::create_from_allocator(
+        allocator.clone(),
+      )?;
+    let range_key_skl =
+      SkipMap::<PhantomRangeKey<K>, PhantomRangeUpdateSpan<K, V>>::create_from_allocator(
+        allocator,
+      )?;
 
-impl<K: ?Sized, V: ?Sized> Memtable<K, V> {
-  // /// Returns a new, empty memtable.
-  // ///
-  // /// ## Example
-  // ///
-  // /// ```rust
-  // /// use memorable::bounded::generic::Memtable;
-  // ///
-  // /// let memtable: Memtable<i32, i32> = Memtable::new();
-  // /// ```
-  // #[inline]
-  // pub fn new() -> Self {
-  //   Self {
-  //     inner: Arc::new(Inner {
-  //       skl: SkipMap::new(),
-  //       range_del_skl: SkipMap::new(),
-  //       range_key_skl: SkipMap::new(),
-  //     }),
-  //   }
-  // }
+    Ok(Self {
+      inner: Arc::new(Inner {
+        skl,
+        range_del_skl,
+        range_key_skl,
+      }),
+    })
+  }
 }
 
 impl<K, V> Memtable<K, V>
@@ -172,10 +141,10 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let ages = Memtable::new();
-  /// ages.insert(0, "Bill Gates", 64);
+  /// let ages = Options::new().alloc::<Memtable<str, u8>>().unwrap();
+  /// ages.insert(0, "Bill Gates", &64);
   ///
   /// assert!(ages.contains_key(0, &"Bill Gates"));
   /// assert!(!ages.contains_key(0, &"Steve Jobs"));
@@ -795,7 +764,11 @@ where
   /// assert!(iter.next().is_none());
   /// ```
   #[inline]
-  pub fn range_bulk_deletions<'a, Q, R>(&'a self, version: u64, r: R) -> BulkDeletionRange<'a, K, V, Q, R>
+  pub fn range_bulk_deletions<'a, Q, R>(
+    &'a self,
+    version: u64,
+    r: R,
+  ) -> BulkDeletionRange<'a, K, V, Q, R>
   where
     R: RangeBounds<Q>,
     Q: ?Sized + Comparable<K::Ref<'a>>,
@@ -880,7 +853,11 @@ where
   /// assert!(iter.next().is_none());
   /// ```
   #[inline]
-  pub fn range_bulk_updates<'a, Q, R>(&'a self, version: u64, r: R) -> BulkUpdateRange<'a, K, V, Q, R>
+  pub fn range_bulk_updates<'a, Q, R>(
+    &'a self,
+    version: u64,
+    r: R,
+  ) -> BulkUpdateRange<'a, K, V, Q, R>
   where
     R: RangeBounds<Q>,
     Q: ?Sized + Comparable<K::Ref<'a>>,

@@ -1,5 +1,8 @@
 use {
-  super::{BulkDeletionEntry, BulkUpdateEntry, Entry, EntryValue, Memtable, Query, QueryRange, PhantomRangeKey, PhantomRangeDeletionSpan, PhantomRangeUpdateSpan},
+  super::{
+    BulkDeletionEntry, BulkUpdateEntry, Entry, EntryValue, Memtable, PhantomRangeDeletionSpan,
+    PhantomRangeKey, PhantomRangeUpdateSpan, Query, QueryRange,
+  },
   core::ops::{ControlFlow, RangeBounds},
   skl::generic::{
     multiple_version::{

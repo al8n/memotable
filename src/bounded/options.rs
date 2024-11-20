@@ -5,6 +5,8 @@ pub use skl::{
 
 use skl::Options as SklOptions;
 
+use super::sealed::Constructable;
+
 /// The options for the `Memtable`.
 #[derive(Debug, Clone, Copy)]
 pub struct Options {
@@ -98,9 +100,26 @@ impl Options {
     self
   }
 
+  /// Allocates a new bounded memtable with the options.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::bounded::{Options, generic::Memtable};
+  ///
+  /// let table = Options::new().alloc::<Memtable<String, String>>().unwrap();
+  /// ```
+  #[inline]
+  pub fn alloc<M>(self) -> Result<M, skl::error::Error>
+  where
+    M: Constructable,
+  {
+    M::construct(self)
+  }
+
   /// Converts the options to the `SklOptions`.
   #[inline]
-  pub(crate) fn to_skl_options(&self) -> SklOptions {
+  pub(super) fn to_skl_options(&self) -> SklOptions {
     SklOptions::new()
       .with_capacity(self.capacity)
       .with_max_height(self.maximum_height)
