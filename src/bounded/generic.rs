@@ -1,5 +1,7 @@
 use super::sealed::Constructable;
 
+pub use dbutils::types::MaybeStructured;
+pub use skl::{among, either, error::Error};
 use {
   core::ops::{Bound, ControlFlow, RangeBounds},
   either::Either,
@@ -12,15 +14,12 @@ use {
         sync::{Entry as MapEntry, SkipMap},
         Map,
       },
-      Comparable, KeyRef, MaybeStructured, Type,
+      Builder, Comparable, KeyRef, Type,
     },
-    KeyBuilder, VacantBuffer, ValueBuilder,
+    Arena, KeyBuilder, VacantBuffer, ValueBuilder,
   },
   std::sync::Arc,
 };
-
-pub use skl::{among, either, error::Error};
-use skl::{generic::Builder, Arena};
 
 pub use entry::*;
 
@@ -447,14 +446,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::{Memtable, MaybeStructured}, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
-  /// memtable.remove_range(0, Bound::Included(4), Bound::Included(7));
-  /// memtable.remove_range(0, Bound::Excluded(6), Bound::Unbounded);
+  /// memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
+  /// memtable.remove_range(0, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
+  /// memtable.remove_range(0, MaybeStructured::from(&7)..);
   ///
   /// let mut iter = memtable.iter_bulk_deletions(0);
   ///
@@ -480,15 +479,15 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::{Memtable, MaybeStructured}, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable<u32, str>>().unwrap();
   ///
-  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
-  /// memtable.remove_range(1, Bound::Included(1), Bound::Included(7));
-  /// memtable.remove_range(0, Bound::Included(4), Bound::Included(7));
-  /// memtable.remove_range(0, Bound::Excluded(6), Bound::Unbounded);
+  /// memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
+  /// memtable.remove_range(1, MaybeStructured::from(&1)..=MaybeStructured::from(&7));
+  /// memtable.remove_range(0, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
+  /// memtable.remove_range(0, MaybeStructured::from(&7)..);
   ///
   /// let mut iter = memtable.iter_bulk_deletions_all_versions(0);
   ///
@@ -647,17 +646,18 @@ where
   /// In this example, you can see that the value yield by point range is not shadowed by the range operation entries.
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::{Memtable, MaybeStructured}, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
-  /// memtable.insert(0, 3, "three");
-  /// memtable.insert(0, 4, "four");
+  /// memtable.insert(0, &1, "one");
+  /// memtable.insert(0, &2, "two");
+  /// memtable.insert(0, &3, "three");
+  /// memtable.insert(0, &4, "four");
   ///
-  /// memtable.remove_range(0, Bound::Excluded(1), Bound::Unbounded);
+  /// let r = MaybeStructured::from(&2);
+  /// memtable.remove_range(0, r..);
   ///
   /// let mut iter = memtable.range_points(0, 2..=4);
   ///
@@ -692,14 +692,14 @@ where
   /// In this example, you can see that the value yield by point range is not shadowed by the range operation entries.
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one-v0");
-  /// memtable.insert(1, 1, "one-v1");
-  /// memtable.insert(1, 2, "two-v1");
-  /// memtable.insert(2, 3, "three-v2");
+  /// memtable.insert(0, &1, "one-v0");
+  /// memtable.insert(1, &1, "one-v1");
+  /// memtable.insert(1, &2, "two-v1");
+  /// memtable.insert(2, &3, "three-v2");
   ///
   /// let mut iter = memtable.range_all_points(0, 1..=3);
   ///
@@ -742,14 +742,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::{Memtable, MaybeStructured}, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
-  /// memtable.remove_range(0, Bound::Included(4), Bound::Included(7));
-  /// memtable.remove_range(0, Bound::Excluded(6), Bound::Unbounded);
+  /// memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
+  /// memtable.remove_range(0, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
+  /// memtable.remove_range(0, MaybeStructured::from(&7)..);
   ///
   /// let mut iter = memtable.range_bulk_deletions(0, 1..=5);
   ///
@@ -781,14 +781,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::{Memtable, MaybeStructured}, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.remove_range(0, Bound::Included(1), Bound::Excluded(3));
-  /// memtable.remove_range(1, Bound::Included(1), Bound::Included(7));
-  /// memtable.remove_range(1, Bound::Included(4), Bound::Included(7));
+  /// memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
+  /// memtable.remove_range(1, MaybeStructured::from(&1)..=MaybeStructured::from(&7));
+  /// memtable.remove_range(1, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
   ///
   /// let mut iter = memtable.range_bulk_deletions_all_versions(2, 1..=5);
   ///
@@ -1029,7 +1029,7 @@ where
   /// assert!(memtable.get(1, &3).is_none());
   /// assert!(memtable.get(1, &4).is_none());
   /// ```
-  pub fn remove_range<'a, Q, R>(
+  pub fn remove_range<'a, R>(
     &'a self,
     version: u64,
     range: R,
@@ -1039,8 +1039,16 @@ where
   {
     let start = RangeKeyEncoder::new(range.start_bound().map(|k| *k));
     let span = RangeDeletionSpan::new(range.end_bound().map(|k| *k));
-    let kb = |buf: &mut VacantBuffer<'_>| start.encode(buf);
-    let vb = |buf: &mut VacantBuffer<'_>| span.encode(buf);
+    let kb = |buf: &mut VacantBuffer<'_>| {
+      start
+        .encode(buf)
+        .inspect_err(|_| println!("here 1 {} {}", start.encoded_len, buf.capacity()))
+    };
+    let vb = |buf: &mut VacantBuffer<'_>| {
+      span
+        .encode(buf)
+        .inspect_err(|_| println!("here 2 {} {}", span.encoded_len, buf.capacity()))
+    };
     self
       .inner
       .range_del_skl
@@ -1164,4 +1172,76 @@ where
       ControlFlow::Break(Some(Entry::new(self, query_version, ent, value)))
     }
   }
+}
+
+#[test]
+fn s() {
+  use crate::bounded::{
+    generic::{MaybeStructured, Memtable},
+    Options,
+  };
+  use core::ops::Bound;
+
+  let memtable = Options::new().alloc::<Memtable<u32, str>>().unwrap();
+
+  memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
+  memtable.remove_range(1, MaybeStructured::from(&1)..=MaybeStructured::from(&7));
+  memtable.remove_range(1, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
+
+  let mut iter = memtable.range_bulk_deletions_all_versions(2, 1..=5);
+
+  let first = iter.next().unwrap();
+  assert_eq!(first.start_bound(), Bound::Included(&1));
+  assert_eq!(first.end_bound(), Bound::Included(&7));
+  assert_eq!(first.version(), 1);
+
+  let second = iter.next().unwrap();
+  assert_eq!(second.start_bound(), Bound::Included(&1));
+  assert_eq!(second.end_bound(), Bound::Excluded(&3));
+  assert_eq!(second.version(), 0);
+
+  let third = iter.next().unwrap();
+  assert_eq!(third.start_bound(), Bound::Included(&4));
+  assert_eq!(third.end_bound(), Bound::Included(&7));
+  assert_eq!(third.version(), 1);
+
+  assert!(iter.next().is_none());
+}
+
+#[test]
+fn a() {
+  use crate::bounded::{
+    generic::{MaybeStructured, Memtable},
+    Options,
+  };
+  use core::ops::Bound;
+
+  let memtable = Options::new().alloc::<Memtable<u32, str>>().unwrap();
+
+  memtable
+    .remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3))
+    .unwrap();
+  memtable
+    .remove_range(0, MaybeStructured::from(&4)..=MaybeStructured::from(&7))
+    .unwrap();
+  memtable
+    .remove_range(0, MaybeStructured::from(&7)..)
+    .unwrap();
+
+  let mut iter = memtable.iter_bulk_deletions(100);
+  for entry in iter {
+    println!("{:?}", entry);
+  }
+
+  // let first = iter.next().unwrap();
+  // assert_eq!(first.start_bound(), Bound::Included(&1));
+  // assert_eq!(first.end_bound(), Bound::Excluded(&3));
+
+  // let second = iter.next().unwrap();
+  // assert_eq!(second.start_bound(), Bound::Included(&4));
+  // assert_eq!(second.end_bound(), Bound::Included(&7));
+
+  // let third = iter.next().unwrap();
+  // assert_eq!(third.start_bound(), Bound::Excluded(&6));
+  // assert_eq!(third.end_bound(), Bound::Unbounded);
 }
