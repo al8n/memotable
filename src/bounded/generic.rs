@@ -1,31 +1,30 @@
+use core::ops::{Bound, ControlFlow, RangeBounds};
+
 use super::sealed::Constructable;
 
-pub use dbutils::types::MaybeStructured;
-pub use skl::{among, either, error::Error};
-use {
-  core::ops::{Bound, ControlFlow, RangeBounds},
-  either::Either,
-  iter::*,
-  ref_cast::RefCast,
-  skl::{
-    among::Among,
-    generic::{
-      multiple_version::{
-        sync::{Entry as MapEntry, SkipMap},
-        Map,
-      },
-      Builder, Comparable, KeyRef, Type,
+use bulk::*;
+use either::Either;
+use iter::*;
+use ref_cast::RefCast;
+use skl::{
+  among::Among,
+  generic::{
+    multiple_version::{
+      sync::{Entry as MapEntry, SkipMap},
+      Map,
     },
-    Arena, KeyBuilder, VacantBuffer, ValueBuilder,
+    Builder, Comparable, KeyRef, Type,
   },
-  std::sync::Arc,
+  Arena, KeyBuilder, VacantBuffer, ValueBuilder,
 };
+use std::sync::Arc;
 
+pub use dbutils::types::MaybeStructured;
 pub use entry::*;
+pub use skl::{among, either, error::Error};
 
 mod bulk;
 mod entry;
-use bulk::*;
 
 /// Iterators for the memtable.
 pub mod iter;
@@ -47,7 +46,7 @@ struct Inner<K: ?Sized, V: ?Sized> {
   range_key_skl: SkipMap<PhantomRangeKey<K>, PhantomRangeUpdateSpan<K, V>>,
 }
 
-/// Memtable based on unbounded `SkipList`.
+/// Memtable based on bounded ARENA-style `SkipList`.
 ///
 /// All APIs are designed to be lock-free, but it is the user's responsibility to ensure that the
 /// `version` is monotonically increasing to promise linear and avoid ABA problems.
@@ -60,18 +59,18 @@ struct Inner<K: ?Sized, V: ?Sized> {
 /// Besides, range remove entry has higher priority than range set entry.
 ///
 /// ```rust
-/// use memorable::bounded::generic::Memtable;
+/// use memorable::bounded::{generic::Memtable, Options};
 /// use core::ops::Bound;
 ///
-/// let memtable = Memtable::<&str, &str>::new();
+/// let memtable = Options::new().alloc::<Memtable::<str, str>>().unwrap();
 ///
-/// memtable.insert(0, "1", "v1");
-/// memtable.insert(0, "2", "v2");
-/// memtable.insert(0, "3", "v3");
+/// memtable.insert(0, "1", "v1").unwrap();
+/// memtable.insert(0, "2", "v2").unwrap();
+/// memtable.insert(0, "3", "v3").unwrap();
 ///
-/// memtable.remove_range(0, Bound::Included("2"), Bound::Unbounded);
+/// memtable.remove_range(0, (Bound::Included("2".into()), Bound::Unbounded));
 ///
-/// memtable.update_range(0, Bound::Included("1"), Bound::Unbounded, "updated");
+/// memtable.update_range(0, (Bound::Included("1".into()), Bound::Unbounded), "updated");
 ///
 /// assert_eq!(*memtable.get(0, &"1").unwrap().value(), "updated");
 /// assert!(memtable.get(0, &"2").is_none());
@@ -164,9 +163,9 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable: Memtable<i32, i32> = Memtable::new();
+  /// let memtable: Memtable<i32, i32> = Options::new().alloc().unwrap();
   ///
   /// memtable.insert(0, 1, 1);
   /// assert_eq!(*memtable.get(0, &1).unwrap().value(), 1);
@@ -188,15 +187,15 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
+  /// memtable.insert(0, 1, "one").unwrap();
+  /// memtable.insert(0, 2, "two").unwrap();
   ///
   /// let first = memtable.first(0).unwrap();
-  /// assert_eq!(*first.value(), "one");
+  /// assert_eq!(*first.value(), "one").unwrap();
   /// ```
   #[inline]
   pub fn first(&self, version: u64) -> Option<Entry<'_, K, V>> {
@@ -208,15 +207,15 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
+  /// memtable.insert(0, 1, "one").unwrap();
+  /// memtable.insert(0, 2, "two").unwrap();
   ///
   /// let last = memtable.last(0).unwrap();
-  /// assert_eq!(*last.value(), "two");
+  /// assert_eq!(*last.value(), "two").unwrap();
   /// ```
   #[inline]
   pub fn last(&self, version: u64) -> Option<Entry<'_, K, V>> {
@@ -233,7 +232,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use std::ops::Bound::*;
   ///
   /// let numbers = Memtable::new();
@@ -267,7 +266,7 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use std::ops::Bound::*;
   ///
   /// let numbers = Memtable::new();
@@ -297,19 +296,19 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
-  /// memtable.insert(0, 3, "three");
-  /// memtable.insert(0, 4, "four");
+  /// memtable.insert(0, 1, "one").unwrap();
+  /// memtable.insert(0, 2, "two").unwrap();
+  /// memtable.insert(0, 3, "three").unwrap();
+  /// memtable.insert(0, 4, "four").unwrap();
   ///
-  /// memtable.remove_range(1, Bound::Excluded(1), Bound::Unbounded);
+  /// memtable.remove_range(1, (Bound::Excluded((&1).into()), Bound::Unbounded));
   ///
-  /// memtable.update_range(2, Bound::Unbounded, Bound::Included(2), "updated");
+  /// memtable.update_range(2, (Bound::Unbounded, Bound::Included((&2).into())), "updated");
   ///
   /// // At view 0, the memtable contains 4 entries.
   /// let mut num = 0;
@@ -323,7 +322,7 @@ where
   /// let mut num = 0;
   /// for entry in memtable.iter(1) {
   ///   assert_eq!(entry.key(), &1);
-  ///   assert_eq!(*entry.value(), "one");
+  ///   assert_eq!(*entry.value(), "one").unwrap();
   ///   num += 1;
   /// }
   /// assert_eq!(num, 1);
@@ -352,19 +351,19 @@ where
   /// In this example, you can see that the value yield by point iter is not shadowed by the range entries.
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
-  /// memtable.insert(1, 3, "three");
-  /// memtable.insert(2, 4, "four");
+  /// memtable.insert(0, &1, "one").unwrap();
+  /// memtable.insert(0, &2, "two").unwrap();
+  /// memtable.insert(1, &3, "three").unwrap();
+  /// memtable.insert(2, &4, "four").unwrap();
   ///
-  /// memtable.remove_range(1, Bound::Excluded(1), Bound::Unbounded);
+  /// memtable.remove_range(1, (Bound::Excluded((&1).into()), Bound::Unbounded));
   ///
-  /// memtable.update_range(2, Bound::Unbounded, Bound::Included(2), "updated");
+  /// memtable.update_range(2, (Bound::Unbounded, Bound::Included((&2).into())), "updated");
   ///
   /// let mut num = 0;
   /// for (idx, entry) in memtable.iter_points(0).enumerate() {
@@ -401,14 +400,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one-v0");
-  /// memtable.insert(1, 1, "one-v1");
-  /// memtable.insert(1, 2, "two-v1");
-  /// memtable.insert(2, 3, "three-v2");
+  /// memtable.insert(0, &1, "one-v0");
+  /// memtable.insert(1, &1, "one-v1");
+  /// memtable.insert(1, &2, "two-v1");
+  /// memtable.insert(2, &3, "three-v2");
   ///
   /// let mut iter = memtable.iter_points_all_versions(0);
   ///
@@ -531,10 +530,10 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
   /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "[1, 3)");
   /// memtable.update_range(1, Bound::Included(4), Bound::Included(7), "[4, 7]");
@@ -566,10 +565,10 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
   /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "[1, 3)");
   /// memtable.update_range(1, Bound::Included(1), Bound::Included(7), "[1, 7]");
@@ -614,14 +613,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
-  /// memtable.insert(0, 3, "three");
-  /// memtable.insert(0, 4, "four");
+  /// memtable.insert(0, 1, "one").unwrap();
+  /// memtable.insert(0, 2, "two").unwrap();
+  /// memtable.insert(0, 3, "three").unwrap();
+  /// memtable.insert(0, 4, "four").unwrap();
   /// memtable.insert(0, 5, "five");
   /// memtable.insert(0, 6, "six");
   ///
@@ -651,10 +650,10 @@ where
   ///
   /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.insert(0, &1, "one");
-  /// memtable.insert(0, &2, "two");
-  /// memtable.insert(0, &3, "three");
-  /// memtable.insert(0, &4, "four");
+  /// memtable.insert(0, &1, "one").unwrap();
+  /// memtable.insert(0, &2, "two").unwrap();
+  /// memtable.insert(0, &3, "three").unwrap();
+  /// memtable.insert(0, &4, "four").unwrap();
   ///
   /// let r = MaybeStructured::from(&2);
   /// memtable.remove_range(0, r..);
@@ -663,15 +662,15 @@ where
   ///
   /// let first = iter.next().unwrap();
   /// assert_eq!(first.key(), &2);
-  /// assert_eq!(*first.value(), "two");
+  /// assert_eq!(*first.value(), "two").unwrap();
   ///
   /// let second = iter.next().unwrap();
   /// assert_eq!(second.key(), &3);
-  /// assert_eq!(*second.value(), "three");
+  /// assert_eq!(*second.value(), "three").unwrap();
   ///
   /// let third = iter.next().unwrap();
   /// assert_eq!(third.key(), &4);
-  /// assert_eq!(*third.value(), "four");
+  /// assert_eq!(*third.value(), "four").unwrap();
   ///
   /// assert!(iter.next().is_none());
   /// ```
@@ -742,14 +741,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::{generic::{Memtable, MaybeStructured}, Options};
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
   /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
-  /// memtable.remove_range(0, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
-  /// memtable.remove_range(0, MaybeStructured::from(&7)..);
+  /// memtable.remove_range(0, 1..3);
+  /// memtable.remove_range(0, 4..=7);
+  /// memtable.remove_range(0, 7..);
   ///
   /// let mut iter = memtable.range_bulk_deletions(0, 1..=5);
   ///
@@ -781,14 +780,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::{generic::{Memtable, MaybeStructured}, Options};
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
   /// let memtable = Options::new().alloc::<Memtable::<u32, str>>().unwrap();
   ///
-  /// memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
-  /// memtable.remove_range(1, MaybeStructured::from(&1)..=MaybeStructured::from(&7));
-  /// memtable.remove_range(1, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
+  /// memtable.remove_range(0, 1..3);
+  /// memtable.remove_range(1, 1..=7);
+  /// memtable.remove_range(1, 4..=7);
   ///
   /// let mut iter = memtable.range_bulk_deletions_all_versions(2, 1..=5);
   ///
@@ -827,16 +826,16 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
+  /// memtable.insert(0, &1, "one").unwrap();
   ///
-  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "[1, 3)");
-  /// memtable.update_range(1, Bound::Included(4), Bound::Included(7), "[4, 7]");
-  /// memtable.update_range(2, Bound::Excluded(6), Bound::Unbounded, "(6, +∞)");
+  /// memtable.update_range(0, 1..3, "[1, 3)").unwrap();
+  /// memtable.update_range(1, 4..=7, "[4, 7]").unwrap();
+  /// memtable.update_range(2, (Bound::Excluded(6), Bound::Unbounded), "(6, +∞)").unwrap();
   ///
   /// let mut iter = memtable.range_bulk_updates(2, 1..=5);
   ///
@@ -870,14 +869,14 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable = Options::new().alloc::<Memtable::<usize, str>>().unwrap();
   ///
-  /// memtable.update_range(0, Bound::Included(1), Bound::Excluded(3), "1v0");
-  /// memtable.update_range(1, Bound::Included(1), Bound::Included(7), "1v1");
-  /// memtable.update_range(1, Bound::Included(4), Bound::Included(7), "4v1");
+  /// memtable.update_range(0, 1..3, "1v0").unwrap();
+  /// memtable.update_range(1, 1..=7, "1v1").unwrap();
+  /// memtable.update_range(1, 4..=7, "4v1").unwrap();
   ///
   /// let mut iter = memtable.range_bulk_updates_all_versions(2, 1..=5);
   ///
@@ -929,7 +928,7 @@ where
   // /// use memorable::unbounded::{Memtable, Operation};
   // /// use core::ops::Bound;
   // ///
-  // /// let memtable = Memtable::new();
+  // /// let memtable: Memtable<str, str> = Options::new().alloc().unwrap();
   // ///
   // /// let batch = vec![
   // ///   Operation::Insert { key: "key1", value: "value1" },
@@ -970,10 +969,10 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable = Memtable::new();
-  /// memtable.insert(1, "key", "value");
+  /// let memtable: Memtable<str, str> = Options::new().alloc().unwrap();
+  /// memtable.insert(1, "key", "value").unwrap();
   ///
   /// assert_eq!(*memtable.get(1, "key").unwrap().value(), "value");
   /// ```
@@ -991,11 +990,11 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   ///
-  /// let memtable: Memtable<&str, &str> = Memtable::new();
-  /// memtable.insert(0, "key", "value");
-  /// memtable.remove(1, "key");
+  /// let memtable: Memtable<str, str> = Options::new().alloc().unwrap();
+  /// memtable.insert(0, "key", "value").unwrap();
+  /// memtable.remove(1, "key").unwrap();
   /// assert!(memtable.get(0, "key").is_some());
   /// assert!(memtable.get(1, "key").is_none());
   /// ```
@@ -1012,43 +1011,41 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable: Memtable<i32, i32> = Memtable::new();
+  /// let memtable: Memtable<i32, i32> = Options::new().alloc().unwrap();
   ///
-  /// memtable.insert(0, 1, 1);
-  /// memtable.insert(0, 2, 2);
-  /// memtable.insert(0, 3, 3);
-  /// memtable.insert(0, 4, 4);
+  /// memtable.insert(0, &1, &1).unwrap();
+  /// memtable.insert(0, &2, &2).unwrap();
+  /// memtable.insert(0, &3, &3).unwrap();
+  /// memtable.insert(0, &4, &4).unwrap();
   ///
-  /// memtable.remove_range(1, Bound::Included(2), Bound::Unbounded);
+  /// memtable.remove_range(1, 2..).unwrap();
   ///
   /// assert_eq!(*memtable.get(1, &1).unwrap().value(), 1);
   /// assert!(memtable.get(1, &2).is_none());
   /// assert!(memtable.get(1, &3).is_none());
   /// assert!(memtable.get(1, &4).is_none());
   /// ```
-  pub fn remove_range<'a, R>(
+  pub fn remove_range<'a, Q, R>(
     &'a self,
     version: u64,
     range: R,
   ) -> Result<(), Either<K::Error, Error>>
   where
-    R: RangeBounds<MaybeStructured<'a, K>>,
+    R: RangeBounds<Q> + 'a,
+    Q: ?Sized + IntoMaybeStructured<K> + 'a,
   {
+    let range = {
+      let start = range.start_bound().map(IntoMaybeStructured::to_maybe);
+      let end = range.end_bound().map(IntoMaybeStructured::to_maybe);
+      (start, end)
+    };
     let start = RangeKeyEncoder::new(range.start_bound().map(|k| *k));
     let span = RangeDeletionSpan::new(range.end_bound().map(|k| *k));
-    let kb = |buf: &mut VacantBuffer<'_>| {
-      start
-        .encode(buf)
-        .inspect_err(|_| println!("here 1 {} {}", start.encoded_len, buf.capacity()))
-    };
-    let vb = |buf: &mut VacantBuffer<'_>| {
-      span
-        .encode(buf)
-        .inspect_err(|_| println!("here 2 {} {}", span.encoded_len, buf.capacity()))
-    };
+    let kb = |buf: &mut VacantBuffer<'_>| start.encode(buf);
+    let vb = |buf: &mut VacantBuffer<'_>| span.encode(buf);
     self
       .inner
       .range_del_skl
@@ -1070,39 +1067,45 @@ where
   /// ## Example
   ///
   /// ```rust
-  /// use memorable::bounded::generic::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable: Memtable<i32, i32> = Memtable::new();
+  /// let memtable: Memtable<i32, i32> = Options::new().alloc().unwrap();
   ///
-  /// memtable.insert(0, 1, 1);
-  /// memtable.insert(0, 2, 2);
-  /// memtable.insert(0, 3, 3);
-  /// memtable.insert(0, 4, 4);
+  /// memtable.insert(0, &1, &1).unwrap();
+  /// memtable.insert(0, &2, &2).unwrap();
+  /// memtable.insert(0, &3, &3).unwrap();
+  /// memtable.insert(0, &4, &4).unwrap();
   ///
-  /// memtable.update_range(1, Bound::Included(2), Bound::Unbounded, 5);
+  /// memtable.update_range(1, 2.., &5).unwrap();
   ///
   /// assert_eq!(*memtable.get(1, &1).unwrap().value(), 1);
   /// assert_eq!(*memtable.get(1, &2).unwrap().value(), 5);
   /// assert_eq!(*memtable.get(1, &3).unwrap().value(), 5);
   /// assert_eq!(*memtable.get(1, &4).unwrap().value(), 5);
   /// ```
-  pub fn update_range<'a, R>(
+  pub fn update_range<'a, Q, R>(
     &self,
     version: u64,
     range: R,
     value: impl Into<MaybeStructured<'a, V>>,
   ) -> Result<(), Among<K::Error, V::Error, Error>>
   where
-    R: RangeBounds<MaybeStructured<'a, K>>,
+    R: RangeBounds<Q> + 'a,
+    Q: ?Sized + IntoMaybeStructured<K> + 'a,
   {
+    let range = {
+      let start = range.start_bound().map(IntoMaybeStructured::to_maybe);
+      let end = range.end_bound().map(IntoMaybeStructured::to_maybe);
+      (start, end)
+    };
     let start = RangeKeyEncoder::new(range.start_bound().map(|k| *k));
     let span = RangeUpdateSpan::new(range.end_bound().map(|k| *k), value.into());
     let kb = |buf: &mut VacantBuffer<'_>| start.encode(buf);
     let vb = |buf: &mut VacantBuffer<'_>| span.encode(buf);
     self
       .inner
-      .range_del_skl
+      .range_key_skl
       .insert_with_builders(
         version,
         KeyBuilder::new(start.encoded_len, kb),
@@ -1174,74 +1177,32 @@ where
   }
 }
 
-#[test]
-fn s() {
-  use crate::bounded::{
-    generic::{MaybeStructured, Memtable},
-    Options,
-  };
-  use core::ops::Bound;
+use sealed::IntoMaybeStructured;
+mod sealed {
+  use super::MaybeStructured;
 
-  let memtable = Options::new().alloc::<Memtable<u32, str>>().unwrap();
-
-  memtable.remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3));
-  memtable.remove_range(1, MaybeStructured::from(&1)..=MaybeStructured::from(&7));
-  memtable.remove_range(1, MaybeStructured::from(&4)..=MaybeStructured::from(&7));
-
-  let mut iter = memtable.range_bulk_deletions_all_versions(2, 1..=5);
-
-  let first = iter.next().unwrap();
-  assert_eq!(first.start_bound(), Bound::Included(&1));
-  assert_eq!(first.end_bound(), Bound::Included(&7));
-  assert_eq!(first.version(), 1);
-
-  let second = iter.next().unwrap();
-  assert_eq!(second.start_bound(), Bound::Included(&1));
-  assert_eq!(second.end_bound(), Bound::Excluded(&3));
-  assert_eq!(second.version(), 0);
-
-  let third = iter.next().unwrap();
-  assert_eq!(third.start_bound(), Bound::Included(&4));
-  assert_eq!(third.end_bound(), Bound::Included(&7));
-  assert_eq!(third.version(), 1);
-
-  assert!(iter.next().is_none());
-}
-
-#[test]
-fn a() {
-  use crate::bounded::{
-    generic::{MaybeStructured, Memtable},
-    Options,
-  };
-  use core::ops::Bound;
-
-  let memtable = Options::new().alloc::<Memtable<u32, str>>().unwrap();
-
-  memtable
-    .remove_range(0, MaybeStructured::from(&1)..MaybeStructured::from(&3))
-    .unwrap();
-  memtable
-    .remove_range(0, MaybeStructured::from(&4)..=MaybeStructured::from(&7))
-    .unwrap();
-  memtable
-    .remove_range(0, MaybeStructured::from(&7)..)
-    .unwrap();
-
-  let mut iter = memtable.iter_bulk_deletions(100);
-  for entry in iter {
-    println!("{:?}", entry);
+  pub trait IntoMaybeStructured<T: ?Sized> {
+    fn to_maybe(&self) -> MaybeStructured<'_, T>;
   }
 
-  // let first = iter.next().unwrap();
-  // assert_eq!(first.start_bound(), Bound::Included(&1));
-  // assert_eq!(first.end_bound(), Bound::Excluded(&3));
+  impl<T> IntoMaybeStructured<T> for T {
+    #[inline]
+    fn to_maybe(&self) -> MaybeStructured<'_, T> {
+      MaybeStructured::from(self)
+    }
+  }
 
-  // let second = iter.next().unwrap();
-  // assert_eq!(second.start_bound(), Bound::Included(&4));
-  // assert_eq!(second.end_bound(), Bound::Included(&7));
+  impl<T> IntoMaybeStructured<T> for &T {
+    #[inline]
+    fn to_maybe(&self) -> MaybeStructured<'_, T> {
+      MaybeStructured::from(*self)
+    }
+  }
 
-  // let third = iter.next().unwrap();
-  // assert_eq!(third.start_bound(), Bound::Excluded(&6));
-  // assert_eq!(third.end_bound(), Bound::Unbounded);
+  impl<T> IntoMaybeStructured<T> for MaybeStructured<'_, T> {
+    #[inline]
+    fn to_maybe(&self) -> MaybeStructured<'_, T> {
+      *self
+    }
+  }
 }

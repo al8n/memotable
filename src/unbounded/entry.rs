@@ -1,15 +1,13 @@
-use {
-  super::{KeySpan, Memtable, StartKey},
-  core::{
-    cmp::Ordering,
-    ops::{Bound, ControlFlow},
-  },
-  crossbeam_skiplist_mvcc::{
-    nested::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
-    Comparable,
-  },
-  either::Either,
+use super::{KeySpan, Memtable, StartKey};
+use core::{
+  cmp::Ordering,
+  ops::{Bound, ControlFlow},
 };
+use crossbeam_skiplist_mvcc::{
+  nested::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
+  Comparable,
+};
+use either::Either;
 
 pub(super) enum EntryValue<'a, K, V> {
   Range(MapEntry<'a, StartKey<K>, KeySpan<K, V>>),

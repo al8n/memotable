@@ -1,14 +1,12 @@
-use {
-  super::{Memtable, PhantomRangeDeletionSpan, PhantomRangeKey, PhantomRangeUpdateSpan},
-  core::{
-    cmp::Ordering,
-    ops::{Bound, ControlFlow},
-  },
-  either::Either,
-  skl::generic::{
-    multiple_version::sync::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
-    Comparable, KeyRef, Type,
-  },
+use super::{Memtable, PhantomRangeDeletionSpan, PhantomRangeKey, PhantomRangeUpdateSpan};
+use core::{
+  cmp::Ordering,
+  ops::{Bound, ControlFlow},
+};
+use either::Either;
+use skl::generic::{
+  multiple_version::sync::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
+  Comparable, KeyRef, Type,
 };
 
 pub(super) enum EntryValue<'a, K, V>

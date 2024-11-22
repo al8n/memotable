@@ -193,7 +193,6 @@ where
 {
   #[inline]
   unsafe fn from_slice(src: &'a [u8]) -> Self {
-    println!("decode src {src:?}");
     let (bound, key) = src.split_at(1);
     let bound = match bound[0] {
       UNBOUNDED => Bound::Unbounded,
@@ -572,27 +571,17 @@ where
 
   #[inline]
   pub(super) fn encode(&self, buf: &mut VacantBuffer<'_>) -> Result<usize, K::Error> {
-    println!("buf len {}", buf.len());
     match self.key.as_ref() {
       Bound::Excluded(key) => {
-        buf.put_u8_unchecked(u8::MAX);
-        println!("buf len included {}", buf.len());
-        key.encode_to_buffer(buf).map(|_| {
-          println!("encoded buf {:?}", buf.as_ref());
-          self.encoded_len
-        })
+        buf.put_u8_unchecked(EXCLUDED);
+        key.encode_to_buffer(buf).map(|_| self.encoded_len)
       }
       Bound::Included(key) => {
-        buf.put_u8_unchecked(0);
-        println!("buf len excluded {}", buf.len());
-        key.encode_to_buffer(buf).map(|_| {
-          println!("encoded buf {:?}", buf.as_ref());
-          self.encoded_len
-        })
+        buf.put_u8_unchecked(INCLUDED);
+        key.encode_to_buffer(buf).map(|_| self.encoded_len)
       }
       Bound::Unbounded => {
-        buf.put_u8_unchecked(1);
-        println!("buf len unbounded {}", buf.len());
+        buf.put_u8_unchecked(UNBOUNDED);
         Ok(1)
       }
     }

@@ -1,16 +1,14 @@
-use {
-  super::{
-    BulkDeletionEntry, BulkUpdateEntry, Entry, EntryValue, Memtable, PhantomRangeDeletionSpan,
-    PhantomRangeKey, PhantomRangeUpdateSpan, Query, QueryRange,
+use super::{
+  BulkDeletionEntry, BulkUpdateEntry, Entry, EntryValue, Memtable, PhantomRangeDeletionSpan,
+  PhantomRangeKey, PhantomRangeUpdateSpan, Query, QueryRange,
+};
+use core::ops::{ControlFlow, RangeBounds};
+use skl::generic::{
+  multiple_version::{
+    sync::{Iter as MapIter, IterAll, Range as MapRange, RangeAll},
+    Map,
   },
-  core::ops::{ControlFlow, RangeBounds},
-  skl::generic::{
-    multiple_version::{
-      sync::{Iter as MapIter, IterAll, Range as MapRange, RangeAll},
-      Map,
-    },
-    Comparable, KeyRef, Type,
-  },
+  Comparable, KeyRef, Type,
 };
 
 /// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable`.

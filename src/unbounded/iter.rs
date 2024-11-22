@@ -1,13 +1,11 @@
-use {
-  super::{
-    BulkDeletionEntry, BulkUpdateEntry, Entry, EntryValue, KeySpan, Memtable, Query, QueryRange,
-    StartKey,
-  },
-  core::ops::{ControlFlow, RangeBounds},
-  crossbeam_skiplist_mvcc::{
-    nested::{Iter as MapIter, IterAll, Range as MapRange, RangeAll},
-    Comparable,
-  },
+use super::{
+  BulkDeletionEntry, BulkUpdateEntry, Entry, EntryValue, KeySpan, Memtable, Query, QueryRange,
+  StartKey,
+};
+use core::ops::{ControlFlow, RangeBounds};
+use crossbeam_skiplist_mvcc::{
+  nested::{Iter as MapIter, IterAll, Range as MapRange, RangeAll},
+  Comparable,
 };
 
 /// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable`.
