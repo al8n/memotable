@@ -33,12 +33,6 @@ const UNBOUNDED: u8 = 0;
 const INCLUDED: u8 = 1;
 const EXCLUDED: u8 = 2;
 
-#[non_exhaustive]
-enum RangeKind<V> {
-  Set(V),
-  Deletion,
-}
-
 struct Inner<K: ?Sized, V: ?Sized> {
   skl: SkipMap<K, V>,
   // key is the start bound
@@ -117,6 +111,35 @@ where
       SkipMap::<PhantomRangeKey<K>, PhantomRangeUpdateSpan<K, V>>::create_from_allocator(
         allocator,
       )?;
+
+    Ok(Self {
+      inner: Arc::new(Inner {
+        skl,
+        range_del_skl,
+        range_key_skl,
+      }),
+    })
+  }
+
+  #[cfg(all(feature = "memmap", not(target_family = "wasm")))]
+  fn map_anon(opts: super::Options) -> std::io::Result<Self> {
+    fn io_err(e: skl::error::Error) -> std::io::Error {
+      std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+    }
+
+    let skl_opts = opts.to_skl_options();
+    let skl = Builder::new()
+      .with_options(skl_opts)
+      .map_anon::<SkipMap<K, V>>()?;
+    let allocator = skl.allocator().clone();
+    let range_del_skl =
+      SkipMap::<PhantomRangeKey<K>, PhantomRangeDeletionSpan<K>>::create_from_allocator(
+        allocator.clone(),
+      )
+      .map_err(io_err)?;
+    let range_key_skl =
+      SkipMap::<PhantomRangeKey<K>, PhantomRangeUpdateSpan<K, V>>::create_from_allocator(allocator)
+        .map_err(io_err)?;
 
     Ok(Self {
       inner: Arc::new(Inner {

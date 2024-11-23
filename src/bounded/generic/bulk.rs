@@ -54,8 +54,13 @@ where
   K: ?Sized + Type,
   Q: ?Sized + Equivalent<K::Ref<'a>>,
 {
+  #[inline]
   fn equivalent(&self, key: &RangeKeyRef<'a, K>) -> bool {
-    self.key.equivalent(&key.key)
+    match key.bound.as_ref() {
+      Bound::Unbounded => false,
+      Bound::Included(k) => self.key.equivalent(k),
+      Bound::Excluded(k) => self.key.equivalent(k),
+    }
   }
 }
 
@@ -64,8 +69,13 @@ where
   K: ?Sized + Type,
   Q: ?Sized + Comparable<K::Ref<'a>>,
 {
+  #[inline]
   fn compare(&self, key: &RangeKeyRef<'a, K>) -> cmp::Ordering {
-    self.key.compare(&key.key)
+    match key.bound.as_ref() {
+      Bound::Unbounded => cmp::Ordering::Greater,
+      Bound::Included(k) => self.key.compare(k),
+      Bound::Excluded(k) => self.key.compare(k),
+    }
   }
 }
 
@@ -105,9 +115,8 @@ pub(super) struct RangeKeyRef<'a, K>
 where
   K: ?Sized + Type,
 {
-  bound: Bound<()>,
+  bound: Bound<K::Ref<'a>>,
   raw: &'a [u8],
-  key: K::Ref<'a>,
 }
 
 impl<'a, K> PartialEq for RangeKeyRef<'a, K>
@@ -123,7 +132,11 @@ where
       (Bound::Excluded(_), Bound::Unbounded) => false,
       (Bound::Unbounded, Bound::Included(_)) => false,
       (Bound::Unbounded, Bound::Excluded(_)) => false,
-      _ => self.key == other.key,
+
+      (Bound::Included(a), Bound::Included(b)) => a == b,
+      (Bound::Included(a), Bound::Excluded(b)) => a == b,
+      (Bound::Excluded(a), Bound::Included(b)) => a == b,
+      (Bound::Excluded(a), Bound::Excluded(b)) => a == b,
     }
   }
 }
@@ -159,7 +172,11 @@ where
       (Bound::Unbounded, Bound::Included(_)) => cmp::Ordering::Less,
       (Bound::Unbounded, Bound::Excluded(_)) => cmp::Ordering::Less,
       (Bound::Unbounded, Bound::Unbounded) => cmp::Ordering::Equal,
-      _ => self.key.cmp(&other.key),
+
+      (Bound::Included(a), Bound::Included(b)) => a.cmp(&b),
+      (Bound::Included(a), Bound::Excluded(b)) => a.cmp(&b),
+      (Bound::Excluded(a), Bound::Included(b)) => a.cmp(&b),
+      (Bound::Excluded(a), Bound::Excluded(b)) => a.cmp(&b),
     }
   }
 }
@@ -170,9 +187,7 @@ where
   K::Ref<'a>: core::fmt::Debug,
 {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    let kr = self.bound.as_ref().map(|_| &self.key);
-
-    f.debug_tuple("RangeKeyRef").field(&kr).finish()
+    f.debug_tuple("RangeKeyRef").field(&self.bound).finish()
   }
 }
 
@@ -196,16 +211,12 @@ where
     let (bound, key) = src.split_at(1);
     let bound = match bound[0] {
       UNBOUNDED => Bound::Unbounded,
-      INCLUDED => Bound::Included(()),
-      EXCLUDED => Bound::Excluded(()),
+      INCLUDED => Bound::Included(K::Ref::from_slice(key)),
+      EXCLUDED => Bound::Excluded(K::Ref::from_slice(key)),
       _ => unreachable!(),
     };
 
-    Self {
-      bound,
-      raw: src,
-      key: K::Ref::from_slice(key),
-    }
+    Self { bound, raw: src }
   }
 
   #[inline]
@@ -264,7 +275,7 @@ where
 {
   #[inline]
   pub(super) fn bound(&self) -> Bound<&K::Ref<'a>> {
-    self.bound.map(|_| &self.key)
+    self.bound.as_ref()
   }
 }
 

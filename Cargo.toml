@@ -15,11 +15,14 @@ name = "foo"
 harness = false
 
 [features]
-default = ["unbounded", "bounded"]
+default = ["unbounded", "bounded", "memmap"]
 alloc = ["dbutils?/alloc", "skl?/alloc"]
-std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std", "either/default", "skl?/memmap"]
+std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std", "either/default"]
 unbounded = ["std", "crossbeam-skiplist-mvcc"]
 bounded = ["dbutils", "skl"]
+
+memmap = ["skl/memmap"]
+experimental = ["skl?/experimental"]
 
 [dependencies]
 crossbeam-skiplist-mvcc = { version = "0.2", optional = true, default-features = false }

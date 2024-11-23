@@ -5,12 +5,15 @@
 pub mod generic;
 
 mod options;
-pub use options::Options;
+pub use options::*;
 
 pub use skl::error::{ArenaError, Error};
 
 mod sealed {
   pub trait Constructable: Sized {
     fn construct(opts: super::Options) -> Result<Self, super::Error>;
+
+    #[cfg(all(feature = "memmap", not(target_family = "wasm")))]
+    fn map_anon(opts: super::Options) -> std::io::Result<Self>;
   }
 }
