@@ -1,5 +1,5 @@
-// /// The dynamic key-value type `Memtable`s.
-// pub mod dynamic;
+/// The dynamic key-value type `Memtable`s.
+pub mod dynamic;
 
 /// The generic key-value type `Memtable`s.
 pub mod generic;
@@ -7,7 +7,11 @@ pub mod generic;
 mod options;
 pub use options::*;
 
-pub use skl::error::{ArenaError, Error};
+pub use dbutils::buffer::VacantBuffer;
+pub use skl::{
+  error::{ArenaError, Error},
+  KeyBuilder, ValueBuilder,
+};
 
 mod sealed {
   pub trait Constructable: Sized {

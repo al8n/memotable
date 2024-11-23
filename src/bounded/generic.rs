@@ -153,6 +153,34 @@ where
 
 impl<K, V> Memtable<K, V>
 where
+  K: ?Sized + 'static,
+  V: ?Sized + 'static,
+{
+  /// Returns the maximum version of the memtable.
+  #[inline]
+  pub fn maximum_version(&self) -> u64 {
+    self
+      .inner
+      .skl
+      .maximum_version()
+      .max(self.inner.range_del_skl.maximum_version())
+      .max(self.inner.range_key_skl.maximum_version())
+  }
+
+  /// Returns the minimum version of the memtable.
+  #[inline]
+  pub fn minimum_version(&self) -> u64 {
+    self
+      .inner
+      .skl
+      .minimum_version()
+      .min(self.inner.range_del_skl.minimum_version())
+      .min(self.inner.range_key_skl.minimum_version())
+  }
+}
+
+impl<K, V> Memtable<K, V>
+where
   K: ?Sized + Type + 'static,
   for<'a> K::Ref<'a>: KeyRef<'a, K>,
   V: ?Sized + Type + 'static,
@@ -1005,6 +1033,63 @@ where
     value: impl Into<MaybeStructured<'b, V>>,
   ) -> Result<(), Among<K::Error, V::Error, skl::error::Error>> {
     self.inner.skl.insert(version, key, value).map(|_| ())
+  }
+
+  /// Inserts a `key`-`value` pair into the memtable and returns the new entry.
+  ///
+  /// If there is an existing entry with this key, it will be removed before inserting the new
+  /// one.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::bounded::{generic::Memtable, Options, ValueBuilder, VacantBuffer};
+  ///
+  /// let memtable: Memtable<str, str> = Options::new().alloc().unwrap();
+  /// memtable.insert_with_value_builder(1, "key", ValueBuilder::new(5, |buf: &mut VacantBuffer<'_>| buf.put_slice(b"value"))).unwrap();
+  ///
+  /// assert_eq!(*memtable.get(1, "key").unwrap().value(), "value");
+  /// ```
+  pub fn insert_with_value_builder<'a, E>(
+    &'a self,
+    version: u64,
+    key: impl Into<MaybeStructured<'a, K>>,
+    value_builder: ValueBuilder<impl FnOnce(&mut VacantBuffer<'a>) -> Result<usize, E>>,
+  ) -> Result<(), Among<K::Error, E, skl::error::Error>> {
+    self
+      .inner
+      .skl
+      .insert_with_value_builder(version, key, value_builder)
+      .map(|_| ())
+  }
+
+  /// Inserts a `key`-`value` pair into the memtable and returns the new entry.
+  ///
+  /// If there is an existing entry with this key, it will be removed before inserting the new
+  /// one.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::bounded::{generic::Memtable, Options, KeyBuilder, ValueBuilder, VacantBuffer};
+  ///
+  /// let memtable: Memtable<str, str> = Options::new().alloc().unwrap();
+  /// memtable.insert_with_builders(1, KeyBuilder::new(3, |buf: &mut VacantBuffer<'_>| buf.put_slice(b"key")), ValueBuilder::new(5, |buf: &mut VacantBuffer<'_>| buf.put_slice(b"value"))).unwrap();
+  ///
+  /// assert_eq!(*memtable.get(1, "key").unwrap().value(), "value");
+  /// ```
+  #[allow(single_use_lifetimes)]
+  pub fn insert_with_builders<'a, KE, VE>(
+    &'a self,
+    version: u64,
+    key_builder: KeyBuilder<impl FnOnce(&mut VacantBuffer<'a>) -> Result<usize, KE>>,
+    value_builder: ValueBuilder<impl FnOnce(&mut VacantBuffer<'a>) -> Result<usize, VE>>,
+  ) -> Result<(), Among<KE, VE, skl::error::Error>> {
+    self
+      .inner
+      .skl
+      .insert_with_builders(version, key_builder, value_builder)
+      .map(|_| ())
   }
 
   /// Insert a tombstone entry for the specified `key` from the memtable and returns it.

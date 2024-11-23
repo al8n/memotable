@@ -386,7 +386,7 @@ where
   }
 }
 
-/// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable`.
+/// An iterator over the point entries (bulk-deletion and bulk-update operations will be ignored) of a `Memtable` with in a specified range.
 pub struct PointRange<'a, K, V, Q, R>
 where
   K: ?Sized + Type + 'static,

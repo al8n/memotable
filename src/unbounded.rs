@@ -278,6 +278,28 @@ impl<K, V> Memtable<K, V> {
       }),
     }
   }
+
+  /// Returns the maximum version of the memtable.
+  #[inline]
+  pub fn maximum_version(&self) -> u64 {
+    self
+      .inner
+      .skl
+      .maximum_version()
+      .max(self.inner.range_del_skl.maximum_version())
+      .max(self.inner.range_key_skl.maximum_version())
+  }
+
+  /// Returns the minimum version of the memtable.
+  #[inline]
+  pub fn minimum_version(&self) -> u64 {
+    self
+      .inner
+      .skl
+      .minimum_version()
+      .min(self.inner.range_del_skl.minimum_version())
+      .min(self.inner.range_key_skl.minimum_version())
+  }
 }
 
 impl<K, V> Memtable<K, V>
