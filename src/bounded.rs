@@ -9,6 +9,7 @@ pub use options::*;
 
 pub use dbutils::buffer::VacantBuffer;
 pub use skl::{
+  among, either,
   error::{ArenaError, Error},
   KeyBuilder, ValueBuilder,
 };

@@ -1,6 +1,6 @@
 use core::ops::{Bound, ControlFlow, RangeBounds};
 
-use super::sealed::Constructable;
+use super::{sealed::Constructable, Error};
 
 use bulk::*;
 use either::Either;
@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 pub use dbutils::types::MaybeStructured;
 pub use entry::*;
-pub use skl::{among, either, error::Error};
 
 mod bulk;
 mod entry;
@@ -193,7 +192,7 @@ where
   /// use memorable::bounded::{generic::Memtable, Options};
   ///
   /// let ages = Options::new().alloc::<Memtable<str, u8>>().unwrap();
-  /// ages.insert(0, "Bill Gates", &64);
+  /// ages.insert(0, "Bill Gates", &64).unwrap();
   ///
   /// assert!(ages.contains_key(0, &"Bill Gates"));
   /// assert!(!ages.contains_key(0, &"Steve Jobs"));
