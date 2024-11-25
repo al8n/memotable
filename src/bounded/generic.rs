@@ -7,13 +7,15 @@ use either::Either;
 use iter::*;
 use ref_cast::RefCast;
 use skl::{
-  among::Among, generic::{
+  among::Among,
+  generic::{
     multiple_version::{
       sync::{Entry as MapEntry, SkipMap},
       Map,
     },
     Builder, Comparable, KeyRef, Type,
-  }, Allocator as _, Arena, KeyBuilder, VacantBuffer, ValueBuilder
+  },
+  Allocator as _, Arena, KeyBuilder, VacantBuffer, ValueBuilder,
 };
 use std::sync::Arc;
 
@@ -182,7 +184,7 @@ where
   }
 
   /// Returns the mutable reserved slice of the memtable by users.
-  /// 
+  ///
   /// ## Safety
   /// - The caller need to make sure there is no data-race
   ///

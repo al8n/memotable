@@ -19,7 +19,7 @@ default = ["unbounded", "bounded", "memmap"]
 alloc = ["dbutils?/alloc", "skl?/alloc"]
 std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std", "either/default"]
 unbounded = ["std", "crossbeam-skiplist-mvcc"]
-bounded = ["dbutils", "skl"]
+bounded = ["alloc", "dbutils", "skl"]
 
 memmap = ["skl/memmap"]
 experimental = ["skl?/experimental"]

@@ -202,7 +202,7 @@ where
   }
 
   /// Returns the mutable reserved slice of the memtable by users.
-  /// 
+  ///
   /// ## Safety
   /// - The caller need to make sure there is no data-race
   ///
