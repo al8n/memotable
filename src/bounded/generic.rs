@@ -1112,6 +1112,32 @@ where
     self.inner.skl.get_or_remove(version, key).map(|_| ())
   }
 
+  /// Insert a tombstone entry for the specified `key` from the memtable and returns it.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use memorable::bounded::{generic::Memtable, Options, KeyBuilder, VacantBuffer};
+  ///
+  /// let memtable: Memtable<str, str> = Options::new().alloc().unwrap();
+  /// memtable.insert(0, "key", "value").unwrap();
+  /// memtable.remove_with_builder(1, KeyBuilder::new(3, |buf: &mut VacantBuffer<'_>| buf.put_slice(b"key"))).unwrap();
+  /// assert!(memtable.get(0, "key").is_some());
+  /// assert!(memtable.get(1, "key").is_none());
+  /// ```
+  #[inline]
+  pub fn remove_with_builder<'a, E>(
+    &'a self,
+    version: u64,
+    key_builder: KeyBuilder<impl FnOnce(&mut VacantBuffer<'a>) -> Result<usize, E>>,
+  ) -> Result<(), Either<E, Error>> {
+    self
+      .inner
+      .skl
+      .get_or_remove_with_builder(version, key_builder)
+      .map(|_| ())
+  }
+
   /// Inserts a range deletion entry into the memtable.
   ///
   /// ## Example
@@ -1148,6 +1174,7 @@ where
       let end = range.end_bound().map(IntoMaybeStructured::to_maybe);
       (start, end)
     };
+
     let start = RangeKeyEncoder::new(range.start_bound().map(|k| *k));
     let span = RangeDeletionSpan::new(range.end_bound().map(|k| *k));
     let kb = |buf: &mut VacantBuffer<'_>| start.encode(buf);

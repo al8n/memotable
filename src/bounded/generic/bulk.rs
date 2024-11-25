@@ -626,7 +626,7 @@ where
 
     Self {
       end_bound,
-      encoded_len: 1 + end_len, // end bound byte + end key
+      encoded_len: end_len,
     }
   }
 
