@@ -1,41 +1,57 @@
-use super::{KeySpan, Memtable, StartKey};
+use super::{Memtable, PhantomRangeDeletionSpan, PhantomRangeKey, PhantomRangeUpdateSpan};
 use core::{
   cmp::Ordering,
   ops::{Bound, ControlFlow},
 };
-use crossbeam_skiplist_mvcc::{
-  nested::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
-  Comparable,
-};
 use either::Either;
+use skl::generic::{
+  multiple_version::sync::{Entry as MapEntry, VersionedEntry as MapVersionedEntry},
+  Comparable, KeyRef, Type,
+};
 
-pub(super) enum EntryValue<'a, K, V> {
-  Range(MapEntry<'a, StartKey<K>, KeySpan<K, V>>),
-  Point(&'a V),
+pub(super) enum EntryValue<'a, K, V>
+where
+  K: ?Sized + Type,
+  V: ?Sized + Type,
+{
+  Range(MapEntry<'a, PhantomRangeKey<K>, PhantomRangeUpdateSpan<K, V>>),
+  Point(V::Ref<'a>),
 }
 
-impl<K, V> Clone for EntryValue<'_, K, V> {
+impl<K, V> Clone for EntryValue<'_, K, V>
+where
+  K: ?Sized + Type,
+  V: ?Sized + Type,
+{
   #[inline]
   fn clone(&self) -> Self {
     match self {
-      Self::Range(entry) => Self::Range(entry.clone()),
-      Self::Point(entry) => Self::Point(entry),
+      Self::Range(ent) => Self::Range(ent.clone()),
+      Self::Point(ent) => Self::Point(*ent),
     }
   }
 }
 
-impl<'a, K, V> EntryValue<'a, K, V> {
+impl<'a, K, V> EntryValue<'a, K, V>
+where
+  K: ?Sized + Type,
+  V: ?Sized + Type,
+{
   #[inline]
-  fn value(&self) -> &'a V {
+  fn value(&self) -> &V::Ref<'a> {
     match self {
-      Self::Range(entry) => entry.value().unwrap_value(),
-      Self::Point(entry) => entry,
+      Self::Range(ent) => ent.value().value(),
+      Self::Point(ent) => ent,
     }
   }
 }
 
 /// An entry in the `Memtable`.
-pub struct Entry<'a, K, V> {
+pub struct Entry<'a, K, V>
+where
+  K: ?Sized + Type,
+  V: ?Sized + Type,
+{
   table: &'a Memtable<K, V>,
   key: MapEntry<'a, K, V>,
   value: EntryValue<'a, K, V>,
@@ -45,8 +61,8 @@ pub struct Entry<'a, K, V> {
 
 impl<K, V> core::fmt::Debug for Entry<'_, K, V>
 where
-  K: core::fmt::Debug,
-  V: core::fmt::Debug,
+  K: core::fmt::Debug + Type + ?Sized,
+  V: core::fmt::Debug + Type + ?Sized,
 {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("Entry")
@@ -57,7 +73,11 @@ where
   }
 }
 
-impl<K, V> Clone for Entry<'_, K, V> {
+impl<K, V> Clone for Entry<'_, K, V>
+where
+  K: ?Sized + Type,
+  V: ?Sized + Type,
+{
   #[inline]
   fn clone(&self) -> Self {
     Self {
@@ -70,7 +90,11 @@ impl<K, V> Clone for Entry<'_, K, V> {
   }
 }
 
-impl<'a, K, V> Entry<'a, K, V> {
+impl<'a, K, V> Entry<'a, K, V>
+where
+  K: ?Sized + Type,
+  V: ?Sized + Type,
+{
   #[inline]
   pub(super) fn new(
     table: &'a Memtable<K, V>,
@@ -89,13 +113,13 @@ impl<'a, K, V> Entry<'a, K, V> {
 
   /// Returns the key of the entry.
   #[inline]
-  pub fn key(&self) -> &'a K {
+  pub fn key(&self) -> &K::Ref<'a> {
     self.key.key()
   }
 
   /// Returns the value of the entry.
   #[inline]
-  pub fn value(&self) -> &'a V {
+  pub fn value(&self) -> &V::Ref<'a> {
     self.value.value()
   }
 
@@ -108,24 +132,26 @@ impl<'a, K, V> Entry<'a, K, V> {
 
 impl<K, V> Entry<'_, K, V>
 where
-  K: Ord,
+  K: ?Sized + Type + 'static,
+  for<'a> K::Ref<'a>: KeyRef<'a, K>,
+  V: ?Sized + Type + 'static,
 {
   /// Returns the next entry in the `Memtable`.
   ///
   /// ```rust
-  /// use memorable::unbounded::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable: Memtable<usize, str> = Options::new().alloc().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
-  /// memtable.insert(0, 3, "three");
-  /// memtable.insert(0, 4, "four");
+  /// memtable.insert(0, &1, "one").unwrap();
+  /// memtable.insert(0, &2, "two").unwrap();
+  /// memtable.insert(0, &3, "three").unwrap();
+  /// memtable.insert(0, &4, "four").unwrap();
   ///
-  /// memtable.remove_range(1, Bound::Excluded(1), Bound::Unbounded);
+  /// memtable.remove_range::<usize, _>(1, (Bound::Excluded(&1), Bound::Unbounded)).unwrap();
   ///
-  /// memtable.update_range(2, Bound::Unbounded, Bound::Included(2), "updated");
+  /// memtable.update_range::<usize, _>(2, (Bound::Unbounded, Bound::Included(&2)), "updated").unwrap();
   ///
   /// // At view 0, the memtable contains 4 entries.
   /// let mut num = 0;
@@ -174,19 +200,19 @@ where
   /// Returns the previous entry in the `Memtable`.
   ///
   /// ```rust
-  /// use memorable::unbounded::Memtable;
+  /// use memorable::bounded::{generic::Memtable, Options};
   /// use core::ops::Bound;
   ///
-  /// let memtable = Memtable::<usize, &'static str>::new();
+  /// let memtable: Memtable<usize, str> = Options::new().alloc().unwrap();
   ///
-  /// memtable.insert(0, 1, "one");
-  /// memtable.insert(0, 2, "two");
-  /// memtable.insert(0, 3, "three");
-  /// memtable.insert(0, 4, "four");
+  /// memtable.insert(0, &1, "one").unwrap();
+  /// memtable.insert(0, &2, "two").unwrap();
+  /// memtable.insert(0, &3, "three").unwrap();
+  /// memtable.insert(0, &4, "four").unwrap();
   ///
-  /// memtable.remove_range(1, Bound::Unbounded, Bound::Included(3));
+  /// memtable.remove_range::<usize, _>(1, (Bound::Unbounded, Bound::Included(&3))).unwrap();
   ///
-  /// memtable.update_range(2, Bound::Included(2), Bound::Unbounded, "updated");
+  /// memtable.update_range::<usize, _>(2, (Bound::Included(&2), Bound::Unbounded), "updated").unwrap();
   ///
   /// // At view 0, the memtable contains 4 entries.
   /// let mut num = 4;
@@ -236,21 +262,25 @@ where
 macro_rules! bulk_entry {
   ($(
     $(#[$meta:meta])*
-    $name:ident($ent:ident, $versioned_ent:ident) $( => $value:ident)?
+    $name:ident($span:ty)($ent:ident, $versioned_ent:ident) $( => $value:ident)?
   ),+$(,)?) => {
     $(
       $(#[$meta])*
-      pub struct $name<'a, K, V> {
+      pub struct $name<'a, K, V>
+      where
+        K: ?Sized + Type,
+        V: ?Sized + Type,
+      {
         table: &'a Memtable<K, V>,
-        ent: Either<$ent<'a, StartKey<K>, KeySpan<K, V>>, $versioned_ent<'a, StartKey<K>, KeySpan<K, V>>>,
+        ent: Either<$ent<'a, PhantomRangeKey<K>, $span>, $versioned_ent<'a, PhantomRangeKey<K>, $span>>,
         version: u64,
         query_version: u64,
       }
 
       impl<K, V> core::fmt::Debug for $name<'_, K, V>
       where
-        K: core::fmt::Debug,
-        V: core::fmt::Debug,
+        K: core::fmt::Debug + Type + ?Sized,
+        V: core::fmt::Debug + Type + ?Sized,
       {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
           f.debug_struct(stringify!($name))
@@ -262,7 +292,11 @@ macro_rules! bulk_entry {
         }
       }
 
-      impl<K, V> Clone for $name<'_, K, V> {
+      impl<K, V> Clone for $name<'_, K, V>
+      where
+        K: ?Sized + Type,
+        V: ?Sized + Type,
+      {
         #[inline]
         fn clone(&self) -> Self {
           Self {
@@ -274,12 +308,16 @@ macro_rules! bulk_entry {
         }
       }
 
-      impl<'a, K, V> $name<'a, K, V> {
+      impl<'a, K, V> $name<'a, K, V>
+      where
+        K: ?Sized + Type,
+        V: ?Sized + Type,
+      {
         #[inline]
         pub(super) fn new(
           table: &'a Memtable<K, V>,
           query_version: u64,
-          ent: $ent<'a, StartKey<K>, KeySpan<K, V>>,
+          ent: $ent<'a, PhantomRangeKey<K>, $span>,
         ) -> Self {
           Self {
             version: ent.version(),
@@ -293,7 +331,7 @@ macro_rules! bulk_entry {
         pub(super) fn versioned(
           table: &'a Memtable<K, V>,
           query_version: u64,
-          ent: $versioned_ent<'a, StartKey<K>, KeySpan<K, V>>,
+          ent: $versioned_ent<'a, PhantomRangeKey<K>, $span>,
         ) -> Self {
           Self {
             version: ent.version(),
@@ -307,7 +345,7 @@ macro_rules! bulk_entry {
         #[inline]
         pub fn contains<Q>(&self, key: &Q) -> bool
         where
-          Q: ?Sized + Comparable<K>,
+          Q: ?Sized + Comparable<K::Ref<'a>>,
         {
           (match self.start_bound() {
             Bound::Included(start) => key.compare(start) != Ordering::Less,
@@ -322,30 +360,27 @@ macro_rules! bulk_entry {
 
         /// Returns the bounds of the entry.
         #[inline]
-        pub fn bounds(&self) -> (Bound<&'a K>, Bound<&'a K>) {
+        pub fn bounds(&self) -> (Bound<&K::Ref<'a>>, Bound<&K::Ref<'a>>) {
           (self.start_bound(), self.end_bound())
         }
 
         /// Returns the start bound of the entry.
         #[inline]
-        pub fn start_bound(&self) -> Bound<&'a K> {
-          let (k, v) = match &self.ent {
-            Either::Left(ent) => (ent.key(), ent.value()),
-            Either::Right(ent) => (ent.key(), ent.value().unwrap()),
+        pub fn start_bound(&self) -> Bound<&K::Ref<'a>> {
+          let k = match &self.ent {
+            Either::Left(ent) => ent.key(),
+            Either::Right(ent) => ent.key(),
           };
 
-          match k {
-            StartKey::Key(k) => v.start_bound.as_ref().map(|_| k),
-            StartKey::Minimum => Bound::Unbounded,
-          }
+          k.bound()
         }
 
         /// Returns the end bound of the entry.
         #[inline]
-        pub fn end_bound(&self) -> Bound<&'a K> {
+        pub fn end_bound(&self) -> Bound<&K::Ref<'a>> {
           match &self.ent {
-            Either::Left(ent) => ent.value().end_bound.as_ref(),
-            Either::Right(ent) => ent.value().unwrap().end_bound.as_ref(),
+            Either::Left(ent) => ent.value().bound(),
+            Either::Right(ent) => ent.value().unwrap().bound(),
           }
         }
 
@@ -359,7 +394,7 @@ macro_rules! bulk_entry {
         #[inline]
         pub fn next(&self) -> Option<Self>
         where
-          K: Ord,
+          for<'b> K::Ref<'b>: KeyRef<'b, K>,
         {
           match &self.ent {
             Either::Left(ent) => {
@@ -375,7 +410,7 @@ macro_rules! bulk_entry {
         #[inline]
         pub fn prev(&self) -> Option<Self>
         where
-          K: Ord,
+          for<'b> K::Ref<'b>: KeyRef<'b, K>,
         {
           match &self.ent {
             Either::Left(ent) => {
@@ -390,23 +425,27 @@ macro_rules! bulk_entry {
         $(
           /// Returns the value of the entry.
           #[inline]
-          pub fn $value(&self) -> &'a V {
+          pub fn $value(&self) -> &V::Ref<'a> {
             match &self.ent {
-              Either::Left(ent) => ent.value().unwrap_value(),
-              Either::Right(ent) => ent.value().unwrap().unwrap_value(),
+              Either::Left(ent) => ent.value().value(),
+              Either::Right(ent) => ent.value().unwrap().value(),
             }
           }
         )?
       }
 
-      impl<K, V> core::ops::RangeBounds<K> for $name<'_, K, V> {
+      impl<'a, K, V> core::ops::RangeBounds<K::Ref<'a>> for $name<'a, K, V>
+      where
+        K: ?Sized + Type,
+        V: ?Sized + Type,
+      {
         #[inline]
-        fn start_bound(&self) -> Bound<&K> {
+        fn start_bound(&self) -> Bound<&K::Ref<'a>> {
           self.start_bound()
         }
 
         #[inline]
-        fn end_bound(&self) -> Bound<&K> {
+        fn end_bound(&self) -> Bound<&K::Ref<'a>> {
           self.end_bound()
         }
       }
@@ -416,10 +455,10 @@ macro_rules! bulk_entry {
 
 bulk_entry!(
   /// A range deletion entry in the `Memtable`.
-  BulkDeletionEntry(MapEntry, MapVersionedEntry),
+  BulkDeletionEntry(PhantomRangeDeletionSpan<K>)(MapEntry, MapVersionedEntry),
 );
 
 bulk_entry!(
   /// A range update entry in the `Memtable`.
-  BulkUpdateEntry(MapEntry, MapVersionedEntry) => value,
+  BulkUpdateEntry(PhantomRangeUpdateSpan<K, V>)(MapEntry, MapVersionedEntry) => value,
 );

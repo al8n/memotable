@@ -1,6 +1,6 @@
 [package]
 name = "memorable"
-version = "0.0.0"
+version = "0.1.1"
 edition = "2021"
 repository = "https://github.com/al8n/memorable"
 homepage = "https://github.com/al8n/memorable"
@@ -8,6 +8,8 @@ documentation = "https://docs.rs/memorable"
 description = "Lock-free, ordered and multiple version memory table for key-value databases."
 license = "MIT OR Apache-2.0"
 rust-version = "1.81"
+keywords = ["memory-table", "mvcc", "memtable"]
+categories = ["data-structures", "database-implementations", "development-tools", "no-std"]
 
 [[bench]]
 path = "benches/foo.rs"
@@ -15,17 +17,21 @@ name = "foo"
 harness = false
 
 [features]
-default = ["unbounded", "bounded"]
-alloc = ["dbutils?/alloc"]
+default = ["unbounded", "bounded", "memmap"]
+alloc = ["dbutils?/alloc", "skl?/alloc"]
 std = ["crossbeam-skiplist-mvcc?/std", "dbutils?/std", "either/default"]
 unbounded = ["std", "crossbeam-skiplist-mvcc"]
-bounded = ["dbutils"]
+bounded = ["alloc", "dbutils", "skl"]
+
+memmap = ["std", "skl/memmap"]
+experimental = ["skl?/experimental"]
 
 [dependencies]
 crossbeam-skiplist-mvcc = { version = "0.2", optional = true, default-features = false }
-dbutils = { version = "0.10", default-features = false, optional = true }
+dbutils = { version = "0.11", default-features = false, optional = true }
 either = { version = "1", default-features = false }
 ref-cast = "1"
+skl = { version = "0.20", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

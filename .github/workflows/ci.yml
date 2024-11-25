@@ -39,8 +39,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust
-      # --no-self-update is necessary because the windows environment cannot self-update rustup.exe.
-      run: rustup update stable --no-self-update && rustup default stable
+      run: rustup update nightly --no-self-update && rustup default nightly && rustup component add rustfmt
     - name: Check formatting
       run: cargo fmt --all -- --check
 
@@ -58,8 +57,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust
-      # --no-self-update is necessary because the windows environment cannot self-update rustup.exe.
-      run: rustup update stable --no-self-update && rustup default stable
+      run: rustup update nightly --no-self-update && rustup default nightly && rustup component add clippy
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Apply clippy lints
@@ -84,7 +82,7 @@ jobs:
           - riscv64gc-unknown-linux-gnu
           - wasm32-unknown-unknown
           - wasm32-unknown-emscripten
-          - wasm32-wasi
+          - wasm32-wasip1
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,22 +98,10 @@ jobs:
             ${{ runner.os }}-cross-
       - name: Install Rust
         run: rustup update stable && rustup default stable
-      - name: cross build --target ${{ matrix.target }}
-        run: |
-          cargo install cross
-          cross build --target ${{ matrix.target }}
-        if: matrix.target != 'wasm32-unknown-unknown' && matrix.target != 'wasm32-wasi'
-      # WASM support
       - name: cargo build --target ${{ matrix.target }}
         run: |
           rustup target add ${{ matrix.target }}
-          cargo build --target ${{ matrix.target }}
-        if: matrix.target == 'wasm32-unknown-unknown' || matrix.target == 'wasm32-wasi'
-      # - name: cargo build --target ${{ matrix.target }}
-      #   run: |
-      #     rustup target add ${{ matrix.target }}
-      #     cargo +nightly build --no-default-features --features alloc --target ${{ matrix.target }} -Z build-std=core,alloc
-      #   if: matrix.target == 'mips64-unknown-linux-gnuabi64'
+          cargo build --target ${{ matrix.target }} --no-default-features --features std,unbounded,bounded 
 
   build:
     name: build
@@ -303,37 +289,10 @@ jobs:
         run: cargo install cargo-hack
       - name: Miri
         run: |
-          bash ci/miri_sb.sh ${{ matrix.target }} ${{ matrix.cfg }}
+          bash ci/miri_sb.sh ${{ matrix.target }} ${{ matrix.cfg }} 
 
-  loom:
-    name: loom
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Cache cargo build and registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-loom-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-loom-
-      - name: Install Rust
-        run: rustup update $nightly && rustup default $nightly
-      - name: Loom tests
-        run: cargo test --tests --features loom
-
-  # valgrind
-  valgrind:
-    name: valgrind
+  docs:
+    name: docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -344,28 +303,18 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ubuntu-latest-valgrind-${{ hashFiles('**/Cargo.lock') }}
+          key: ubuntu-latest-docs-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ubuntu-latest-valgrind-
-
-      - name: Install Rust ${{ env.stable }}
-        uses: actions-rs/toolchain@v1
+            ubuntu-latest-docs-
+      - uses: actions-rs/toolchain@v1
         with:
-            toolchain: ${{ env.stable }}
-            override: true
-      - name: Install Valgrind
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y valgrind
-      # Compile tests
-      # - name: cargo build foo
-      #   run: cargo build --bin foo
-      #   working-directory: integration
-
-      # Run with valgrind
-      # - name: Run valgrind foo
-      #   run: valgrind --error-exitcode=1 --leak-check=full --show-leak-kinds=all ./target/debug/foo
-      #   working-directory: integration
+          toolchain: ${{ env.nightly }}
+          override: true
+      - name: "doc --lib --all-features"
+        run: cargo doc --lib --no-deps --all-features
+        env:
+          RUSTFLAGS: --cfg docsrs
+          RUSTDOCFLAGS: --cfg docsrs -Dwarnings
 
   coverage:
     name: coverage
@@ -377,7 +326,6 @@ jobs:
       - cross
       - test
       - sanitizer
-      - loom
     steps:
       - uses: actions/checkout@v4
       - name: Install latest nightly

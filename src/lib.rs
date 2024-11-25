@@ -4,7 +4,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![deny(missing_docs)]
-#![allow(clippy::type_complexity)]
+#![allow(clippy::type_complexity, unused_extern_crates)]
 
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
 extern crate alloc as std;
