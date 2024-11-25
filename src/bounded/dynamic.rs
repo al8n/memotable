@@ -194,6 +194,25 @@ where
   pub fn minimum_version(&self) -> u64 {
     self.0.minimum_version()
   }
+
+  /// Returns the reserved slice of the memtable by users.
+  #[inline]
+  pub fn reserved_slice(&self) -> &[u8] {
+    self.0.reserved_slice()
+  }
+
+  /// Returns the mutable reserved slice of the memtable by users.
+  /// 
+  /// ## Safety
+  /// - The caller need to make sure there is no data-race
+  ///
+  /// # Panic
+  /// - If in read-only mode, and num of reserved bytes is greater than 0, this method will panic.
+  #[allow(clippy::mut_from_ref)]
+  #[inline]
+  pub unsafe fn reserved_slice_mut(&self) -> &mut [u8] {
+    self.0.reserved_slice_mut()
+  }
 }
 
 impl<C> Memtable<C>

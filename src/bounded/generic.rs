@@ -7,15 +7,13 @@ use either::Either;
 use iter::*;
 use ref_cast::RefCast;
 use skl::{
-  among::Among,
-  generic::{
+  among::Among, generic::{
     multiple_version::{
       sync::{Entry as MapEntry, SkipMap},
       Map,
     },
     Builder, Comparable, KeyRef, Type,
-  },
-  Arena, KeyBuilder, VacantBuffer, ValueBuilder,
+  }, Allocator as _, Arena, KeyBuilder, VacantBuffer, ValueBuilder
 };
 use std::sync::Arc;
 
@@ -175,6 +173,25 @@ where
       .minimum_version()
       .min(self.inner.range_del_skl.minimum_version())
       .min(self.inner.range_key_skl.minimum_version())
+  }
+
+  /// Returns the reserved slice of the memtable by users.
+  #[inline]
+  pub fn reserved_slice(&self) -> &[u8] {
+    self.inner.skl.allocator().reserved_slice()
+  }
+
+  /// Returns the mutable reserved slice of the memtable by users.
+  /// 
+  /// ## Safety
+  /// - The caller need to make sure there is no data-race
+  ///
+  /// # Panic
+  /// - If in read-only mode, and num of reserved bytes is greater than 0, this method will panic.
+  #[allow(clippy::mut_from_ref)]
+  #[inline]
+  pub unsafe fn reserved_slice_mut(&self) -> &mut [u8] {
+    self.inner.skl.allocator().reserved_slice_mut()
   }
 }
 
@@ -969,47 +986,6 @@ where
   for<'a> K::Ref<'a>: KeyRef<'a, K>,
   V: ?Sized + Type + 'static,
 {
-  // /// Applies a batch of operations to the memtable.
-  // ///
-  // /// ## Example
-  // ///
-  // /// ```rust
-  // /// use memorable::unbounded::{Memtable, Operation};
-  // /// use core::ops::Bound;
-  // ///
-  // /// let memtable: Memtable<str, str> = Options::new().alloc().unwrap();
-  // ///
-  // /// let batch = vec![
-  // ///   Operation::Insert { key: "key1", value: "value1" },
-  // ///   Operation::Insert { key: "key2", value: "value2" },
-  // ///   Operation::Remove("key3"),
-  // ///   Operation::RemoveRange { start_bound: Bound::Included("key15"), end_bound: Bound::Unbounded },
-  // ///   Operation::UpdateRange { start_bound: Bound::Included("key6"), end_bound: Bound::Included("key10"), value: "updated" },
-  // /// ];
-  // ///
-  // /// memtable.apply(0, batch.into_iter());
-  // /// ```
-  // pub fn apply<B>(&self, version: u64, batch: B)
-  // where
-  //   B: Iterator<Item = Operation<K, V>>,
-  // {
-  //   for op in batch {
-  //     match op {
-  //       Operation::Insert { key, value } => self.insert(version, key, value),
-  //       Operation::Remove(key) => self.remove(version, key),
-  //       Operation::RemoveRange {
-  //         start_bound,
-  //         end_bound,
-  //       } => self.remove_range(version, start_bound, end_bound),
-  //       Operation::UpdateRange {
-  //         start_bound,
-  //         end_bound,
-  //         value,
-  //       } => self.update_range(version, start_bound, end_bound, value),
-  //     }
-  //   }
-  // }
-
   /// Inserts a `key`-`value` pair into the memtable and returns the new entry.
   ///
   /// If there is an existing entry with this key, it will be removed before inserting the new
