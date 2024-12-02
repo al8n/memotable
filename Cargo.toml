@@ -28,7 +28,7 @@ experimental = ["skl?/experimental"]
 
 [dependencies]
 crossbeam-skiplist-mvcc = { version = "0.2", optional = true, default-features = false }
-dbutils = { version = "0.11", default-features = false, optional = true }
+dbutils = { version = "0.12", default-features = false, optional = true }
 either = { version = "1", default-features = false }
 ref-cast = "1"
 skl = { version = "0.20", default-features = false, optional = true }
