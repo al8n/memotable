@@ -27,7 +27,7 @@ memmap = ["std", "skl/memmap"]
 experimental = ["skl?/experimental"]
 
 [dependencies]
-crossbeam-skiplist-mvcc = { version = "0.2", optional = true, default-features = false }
+crossbeam-skiplist-mvcc = { version = "0.3", optional = true, default-features = false }
 dbutils = { version = "0.11", default-features = false, optional = true }
 either = { version = "1", default-features = false }
 ref-cast = "1"
